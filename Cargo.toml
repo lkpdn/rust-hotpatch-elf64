@@ -1,0 +1,61 @@
+[package]
+name = "rust-hotpatch-elf64"
+version = "0.1.0"
+authors = ["lkpdn <den.not.denmark@gmail.com>"]
+homepage = "https://github.com/rust-lang/log"
+
+[profile.dev]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
+panic = 'unwind'
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+codegen-units = 1
+panic = 'unwind'
+
+[profile.test]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
+panic = 'unwind'
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+codegen-units = 1
+panic = 'unwind'
+
+[profile.doc]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
+panic = 'unwind'
+
+[dependencies]
+byteorder = "*"
+elf = { git = "https://github.com/cole14/rust-elf.git" }
+env_logger = "0.3"
+getopts = "0.2"
+libc = "*"
+log = "0.3"
+posix-ipc = { git = "https://github.com/lkpdn/rust-posix-ipc", rev = "47f78cd" }
+ptrace = { git = "https://github.com/lkpdn/rust-ptrace.git", rev = "7614a30" }
+regex = "0.1"

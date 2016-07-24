@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/lkpdn/rust-hotpatch-elf64.svg?branch=master)](https://travis-ci.org/lkpdn/rust-hotpatch-elf64)
+
 # rust-hotpatch-elf64
 
 - no obfuscation, anti-debugging

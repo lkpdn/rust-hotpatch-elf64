@@ -1,4 +1,5 @@
 #![feature(pattern, slice_patterns, trace_macros, inclusive_range_syntax)]
+#[macro_use(read_u64)]
 extern crate elf;
 extern crate getopts;
 extern crate regex;
@@ -15,8 +16,6 @@ use std::io;
 use std::io::prelude::*;
 use std::fmt;
 
-#[macro_use]
-pub mod utils;
 #[macro_use]
 pub mod dwarf;
 #[macro_use]

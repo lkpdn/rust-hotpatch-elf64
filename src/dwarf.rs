@@ -78,7 +78,7 @@ pub struct AbbrevDeclAttrSpec {
 }
 
 impl AbbrevDeclAttrSpec {
-    fn consume(&self, rdr: &mut io::Cursor<Vec<u8>>, comp_unit_header: CompilationUnitHeader)
+    pub fn consume(&self, rdr: &mut io::Cursor<Vec<u8>>, comp_unit_header: CompilationUnitHeader)
       -> Result<Vec<u8>, ::GenError> {
         match self.form.get_class() {
             CLASS::ADDRESS => {
@@ -609,7 +609,8 @@ macro_rules! search_debug_info {
         };
 
         // XXX: avoid inefficient loop and match
-        let result: Vec<$val_type> = Vec::new();
+        let mut results: Vec<$val_type> = Vec::new();
+        let mut candidates: Vec<$val_type> = Vec::new();
         loop {
             let abbrev_number = rdr.read_leb128().unwrap();
             if rdr.position() == rdr.get_ref().len() as u64 { break }
@@ -622,91 +623,22 @@ macro_rules! search_debug_info {
                 let form: DW_FORM = attr_spec.form;
                 let klass = form.get_class();
                 $(
-                match klass {
-                    CLASS::ADDRESS   => {
-                        let read_size = compilation_unit_header.address_size;
-                        if !skip && $attr == name {
-                            let mut val: u64 = 0;
-                            match read_size {
-                                1 => { val = rdr.read_u8().unwrap() as u64 },
-                                2 => { val = rdr.read_u16::<LittleEndian>().unwrap() as u64 },
-                                4 => { val = rdr.read_u32::<LittleEndian>().unwrap() as u64 },
-                                8 => { val = rdr.read_u64::<LittleEndian>().unwrap() as u64 },
-                                _ => { panic!("oh my guiness") },
-                            }
-                            if val != $val[0] as u64 { skip = true }
-                        }
-                        ()
-                    },
-                    CLASS::BLOCK     => {
-                        let read_size: u64 = match form {
-                            DW_FORM_BLOCK1 => { rdr.read_u8().unwrap() as u64 },
-                            DW_FORM_BLOCK2 => { rdr.read_u16::<LittleEndian>().unwrap() as u64 },
-                            DW_FORM_BLOCK4 => { rdr.read_u32::<LittleEndian>().unwrap() as u64 },
-                            DW_FORM_BLOCK => { rdr.read_leb128().unwrap() as u64 },
-                            _ => { panic!("oh my guiness") },
-                        };
-                        if !skip && $attr == name {
-                            let position = rdr.position() as usize;
-                            let inner: Vec<u8> = rdr.get_ref()[position..(position + read_size as usize)].to_vec();
-                            let other: Vec<u8> = $val.to_vec();
-                            if &inner != &$val { skip = true }
-                        }
-                        ()
-                    },
-                    CLASS::CONSTANT  => {
-                        let data: u64 = match form {
-                            DW_FORM_DATA1 => { rdr.read_u8().unwrap() as u64 },
-                            DW_FORM_DATA2 => { rdr.read_u16::<LittleEndian>().unwrap() as u64 },
-                            DW_FORM_DATA4 => { rdr.read_u32::<LittleEndian>().unwrap() as u64 },
-                            DW_FORM_DATA8 => { rdr.read_u64::<LittleEndian>().unwrap() as u64 },
-                            DW_FORM_SDATA => { rdr.read_leb128().unwrap() as u64 },
-                            DW_FORM_UDATA => { rdr.read_leb128().unwrap() as u64 },
-                            _ => { panic!("oh my guiness") },
-                        };
-                        if !skip && $attr == name {
-                            if data != ($val[0] as u64) { skip = true }
-                        }
-                        ()
-                    },
-                    CLASS::EXPRLOC   => {
-                        let read_size = rdr.read_leb128().unwrap() as u64;
-                        if !skip && $attr == name {
-                            let position = rdr.position() as usize;
-                            let inner: Vec<u8> = rdr.get_ref()[position..(position + read_size as usize)].to_vec();
-                            let other: Vec<u8> = $val.to_vec();
-                            if &inner != &$val { skip = true }
-                        }
-                        ()
-                    },
-                    CLASS::FLAG      => {
-                        if !skip && $attr == name { unimplemented!() }
-                        let data: u64 = match form {
-                            DW_FORM_FLAG => {
-                                if rdr.read_u8().unwrap() as u8 == 0 { 0 }
-                                else { 1 }
-                            },
-                            DW_FORM_FLAG_PRESENT => { 1 },
-                            _ => { panic!("oh my guinness") },
-                        };
-                        if !skip && $attr == name {
-                            if data != ($val[0] as u64) { skip = true }
-                        }
-                        ()
-                    },
-                    CLASS::REFERENCE => {
-                        if !skip && $attr == name { unimplemented!() }
-                    },
-                    CLASS::STRING    => {
-                        if !skip && $attr == name { unimplemented!() }
-                    },
-                    CLASS::UNKNOWN   => {
-                        if !skip && $attr == name { unimplemented!() }
-                    }
+                let data: Vec<u8> = attr_spec.consume(&mut rdr, compilation_unit_header).unwrap();
+                if $attr_to_get == name {
+                    candidates.push( unsafe { mem::transmute(data.as_ptr() as $val_type) } );
+                }
+                if !skip && $attr == name {
+                    if ! data.starts_with($val) { skip = true }
                 }
                 )*
             }
+            if skip == false {
+                match candidates.pop() {
+                    Some(c) => results.push(c),
+                    None => (),
+                }
+            }
         }
-        result
+        results
     }}
 }

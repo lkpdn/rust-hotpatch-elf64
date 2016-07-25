@@ -1,4 +1,6 @@
-use std::io;
+use byteorder::ReadBytesExt;
+use std::io::{self, Read};
+use std::mem;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompilationUnitHeader {
@@ -74,6 +76,125 @@ pub struct AbbrevDeclAttrSpec {
     pub name: DW_AT,
     pub form: DW_FORM,
 }
+
+impl AbbrevDeclAttrSpec {
+    fn consume(&self, rdr: &mut io::Cursor<Vec<u8>>, comp_unit_header: CompilationUnitHeader)
+      -> Result<Vec<u8>, ::GenError> {
+        match self.form.get_class() {
+            CLASS::ADDRESS => {
+                let mut buf = vec![0; comp_unit_header.address_size as usize];
+                rdr.read(&mut buf);
+                Ok(buf)
+            },
+            CLASS::BLOCK => {
+                match self.form {
+                    DW_FORM_BLOCK1 => {
+                        let mut buf = vec![0; 1];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_BLOCK2 => {
+                        let mut buf = vec![0; 2];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_BLOCK4 => {
+                        let mut buf = vec![0; 4];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_BLOCK => {
+                        rdr.read_leb128_stream()
+                    },
+                    _ => { panic!("oh my guiness") },
+                }
+            },
+            CLASS::CONSTANT  => {
+                match self.form {
+                    DW_FORM_DATA1 => {
+                        let mut buf = vec![0; 1];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_DATA2 => {
+                        let mut buf = vec![0; 2];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_DATA4 => {
+                        let mut buf = vec![0; 4];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_DATA8 => {
+                        let mut buf = vec![0; 8];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_SDATA => {
+                        rdr.read_leb128_stream()
+                    },
+                    DW_FORM_UDATA => {
+                        rdr.read_leb128_stream()
+                    },
+                    _ => { panic!("oh my guiness") },
+                }
+            },
+            CLASS::EXPRLOC => {
+                let read_size = rdr.read_leb128().unwrap();
+                let position = rdr.position();
+                let new_position = position + read_size;
+                rdr.set_position(new_position);
+                Ok(rdr.get_ref()[position as usize..new_position as usize].to_vec())
+            },
+            CLASS::FLAG => {
+                match self.form {
+                    DW_FORM_FLAG => {
+                        if rdr.read_u8().unwrap() as u8 == 0 { Ok(vec![0; 1]) }
+                        else { Ok(vec![1; 1]) }
+                    },
+                    DW_FORM_FLAG_PRESENT => { Ok(vec![1; 1]) },
+                    _ => { panic!("oh my guiness") },
+                }
+            },
+            CLASS::REFERENCE => {
+                match self.form {
+                    DW_FORM_REF1 => {
+                        let mut buf = vec![0; 1];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_REF2 => {
+                        let mut buf = vec![0; 2];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_REF4 => {
+                        let mut buf = vec![0; 4];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_REF8 => {
+                        let mut buf = vec![0; 8];
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_REF_UDATA => {
+                        rdr.read_leb128_stream()
+                    },
+                    _ => { panic!("oh my guiness") },
+                }
+            },
+            CLASS::STRING => {
+                unimplemented!()
+            },
+            CLASS::UNKNOWN => {
+                unimplemented!()
+            }
+        }
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct FileNameTableEntry {
@@ -410,8 +531,14 @@ pub fn consume_leb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
     Ok(res)
 }
 
+pub fn consume_leb128_stream(v: &mut Vec<u8>) -> Result<Vec<u8>, ::GenError> {
+    let res: u64 = consume_leb128(v).unwrap();
+    unsafe { Ok(mem::transmute::<u64, [u8;8]>(res).as_ref().to_vec()) }
+}
+
 pub trait CursorExt {
     fn read_leb128(&mut self) -> Result<u64, ::GenError>;
+    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, ::GenError>;
 }
 
 impl CursorExt for io::Cursor<Vec<u8>> {
@@ -422,6 +549,17 @@ impl CursorExt for io::Cursor<Vec<u8>> {
         v.drain(0..position as usize);
         let mut size = v.len() as u64;
         let result = consume_leb128(&mut v).unwrap();
+        size -= v.len() as u64;
+        self.set_position(position + size);
+        Ok(result)
+    }
+    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, ::GenError> {
+        // XXX: avoid inefficient cloning
+        let position = self.position();
+        let mut v: Vec<u8> = self.get_ref().clone();
+        v.drain(0..position as usize);
+        let mut size = v.len() as u64;
+        let result = consume_leb128_stream(&mut v).unwrap();
         size -= v.len() as u64;
         self.set_position(position + size);
         Ok(result)
@@ -543,6 +681,18 @@ macro_rules! search_debug_info {
                     },
                     CLASS::FLAG      => {
                         if !skip && $attr == name { unimplemented!() }
+                        let data: u64 = match form {
+                            DW_FORM_FLAG => {
+                                if rdr.read_u8().unwrap() as u8 == 0 { 0 }
+                                else { 1 }
+                            },
+                            DW_FORM_FLAG_PRESENT => { 1 },
+                            _ => { panic!("oh my guinness") },
+                        };
+                        if !skip && $attr == name {
+                            if data != ($val[0] as u64) { skip = true }
+                        }
+                        ()
                     },
                     CLASS::REFERENCE => {
                         if !skip && $attr == name { unimplemented!() }

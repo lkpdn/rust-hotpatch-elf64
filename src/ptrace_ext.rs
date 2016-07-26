@@ -3,22 +3,26 @@ extern crate libc;
 extern crate posix_ipc as ipc;
 use self::ptrace::*;
 use std::ptr;
+use std::ops::Range;
 
 pub trait SyscallExt {
-    fn dispatch(&self) -> Result<u64, usize>;
+    fn dispatch(&self) -> Result<u64, ::GenError>;
 }
 
 impl SyscallExt for Syscall {
-    fn dispatch(&self) -> Result<u64, usize> {
+    fn dispatch(&self) -> Result<u64, ::GenError> {
         let code = 0x9090909090cc050f;
-        let o_regs = try!(getregs(self.pid));
+        let o_regs = try!(getregs(self.pid)
+          .map_err(|e| ::GenError::RawOsError(e)));
         let mut n_regs = o_regs.clone();
         n_regs.rip -= 8;
         let reader = ptrace::Reader::new(self.pid);
-        let o_rip = try!(reader.peek_data(n_regs.rip));
+        let o_rip = try!(reader.peek_data(n_regs.rip)
+          .map_err(|e| ::GenError::RawOsError(e)));
         debug!("o_rip: {}", o_rip);
         let writer = ptrace::Writer::new(self.pid);
-        try!(writer.poke_data(n_regs.rip, code));
+        try!(writer.poke_data(n_regs.rip, code)
+          .map_err(|e| ::GenError::RawOsError(e)));
         n_regs.rdi = self.args[0];
         n_regs.rsi = self.args[1];
         n_regs.rdx = self.args[2];
@@ -28,14 +32,25 @@ impl SyscallExt for Syscall {
         n_regs.orig_rax = self.call;
         n_regs.rax = self.return_val;
         debug!("n_regs: {:?}", n_regs);
-        try!(setregs(self.pid, &n_regs));
-        try!(cont(self.pid, ipc::signals::Signal::None));
+        try!(setregs(self.pid, &n_regs)
+          .map_err(|e| ::GenError::RawOsError(e)));
+        try!(cont(self.pid, ipc::signals::Signal::None)
+          .map_err(|e| ::GenError::RawOsError(e)));
         unsafe { waitpid(self.pid, ptr::null_mut(), 0) };
         let m_regs = try!(getregs(self.pid));
-        try!(setregs(self.pid, &o_regs));
-        try!(writer.poke_data(n_regs.rip, o_rip));
+        try!(setregs(self.pid, &o_regs)
+          .map_err(|e| ::GenError::RawOsError(e)));
+        try!(writer.poke_data(n_regs.rip, o_rip)
+          .map_err(|e| ::GenError::RawOsError(e)));
         Ok((m_regs.rax))
     }
+}
+
+fn check_range_contains_rip(pid: i32, rng: Range<u64>)
+  -> Result<bool, ::GenError> {
+    let regs = try!(getregs(pid).map_err(|e| ::GenError::RawOsError(e)));
+    if rng.contains(regs.rip) { Ok(true) }
+    else { Ok(false) }
 }
 
 extern "C" {
@@ -48,6 +63,7 @@ mod tests {
     use std::ptr;
     use super::ptrace;
     use super::SyscallExt;
+    use super::check_range_contains_rip;
 
     #[test]
     fn dispatch() {
@@ -68,6 +84,15 @@ mod tests {
             0 => { loop { unsafe { raise(19); } } },
             v => v
         }
+    }
+
+    #[test]
+    fn test_check_range_contains_rip() {
+        let pid = fork_and_halt();
+        ptrace::attach(pid).ok().expect("Could not attach to child");
+        unsafe { waitpid(pid, ptr::null_mut(), 0) };
+        assert_eq!(check_range_contains_rip(pid, (0x0u64..0x1u64)).unwrap(), false);
+        assert_eq!(check_range_contains_rip(pid, (0x0u64..0xffffffff_ffffffffu64)).unwrap(), true);
     }
 
     extern "C" {

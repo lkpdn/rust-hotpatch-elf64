@@ -1,4 +1,4 @@
-#![feature(pattern, slice_patterns, trace_macros, inclusive_range_syntax)]
+#![feature(pattern, slice_patterns, trace_macros, inclusive_range_syntax, range_contains)]
 #[macro_use(read_u64)]
 extern crate elf;
 extern crate getopts;

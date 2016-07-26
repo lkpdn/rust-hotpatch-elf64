@@ -13,9 +13,12 @@ use std::fs;
 use std::io;
 use std::io::prelude::*;
 use std::mem;
+use std::time::Duration;
 use std::ptr;
 use std::fmt;
+use std::thread;
 use ptrace_ext::ptrace;
+use ptrace_ext::*;
 
 #[macro_use]
 pub mod helper;
@@ -136,6 +139,23 @@ impl Officer {
         code.extend(vec![0x90; gap_to_next - 14].iter().cloned());
         code.extend([0xff, 0xe0, 0xc9, 0xc3].iter().cloned());
         for c in code.iter() { debug!("0x{:0>2x}", c); }
+        loop {
+            match check_range_contains_rip(
+              self.target.pid,
+              (
+                orig_func_symbol.symbol.value as u64
+                ..
+                (orig_func_symbol.symbol.value + gap_to_next as u64)
+              )
+            ).unwrap() {
+                true => {
+                    self.release_target();
+                    thread::sleep(Duration::from_millis(20));
+                    self.attach_target();
+                },
+                false => { break }
+            }
+        }
         try!(set_data(self.target.pid, orig_func_symbol.symbol.value, code.clone(), code.len()));
         Ok(())
     }

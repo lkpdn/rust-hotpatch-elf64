@@ -39,7 +39,7 @@ impl SyscallExt for Syscall {
     }
 }
 
-fn check_range_contains_rip(pid: i32, rng: Range<u64>)
+pub fn check_range_contains_rip(pid: i32, rng: Range<u64>)
   -> Result<bool, ::GenError> {
     let regs = try!(getregs(pid).map_err(|e| ::GenError::RawOsError(e)));
     if rng.contains(regs.rip) { Ok(true) }

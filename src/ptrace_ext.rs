@@ -6,23 +6,20 @@ use std::ptr;
 use std::ops::Range;
 
 pub trait SyscallExt {
-    fn dispatch(&self) -> Result<u64, ::GenError>;
+    fn dispatch(&self) -> Result<u64, usize>;
 }
 
 impl SyscallExt for Syscall {
-    fn dispatch(&self) -> Result<u64, ::GenError> {
+    fn dispatch(&self) -> Result<u64, usize> {
         let code = 0x9090909090cc050f;
-        let o_regs = try!(getregs(self.pid)
-          .map_err(|e| ::GenError::RawOsError(e)));
+        let o_regs = try!(getregs(self.pid));
         let mut n_regs = o_regs.clone();
         n_regs.rip -= 8;
         let reader = ptrace::Reader::new(self.pid);
-        let o_rip = try!(reader.peek_data(n_regs.rip)
-          .map_err(|e| ::GenError::RawOsError(e)));
+        let o_rip = try!(reader.peek_data(n_regs.rip));
         debug!("o_rip: {}", o_rip);
         let writer = ptrace::Writer::new(self.pid);
-        try!(writer.poke_data(n_regs.rip, code)
-          .map_err(|e| ::GenError::RawOsError(e)));
+        try!(writer.poke_data(n_regs.rip, code));
         n_regs.rdi = self.args[0];
         n_regs.rsi = self.args[1];
         n_regs.rdx = self.args[2];
@@ -32,16 +29,12 @@ impl SyscallExt for Syscall {
         n_regs.orig_rax = self.call;
         n_regs.rax = self.return_val;
         debug!("n_regs: {:?}", n_regs);
-        try!(setregs(self.pid, &n_regs)
-          .map_err(|e| ::GenError::RawOsError(e)));
-        try!(cont(self.pid, ipc::signals::Signal::None)
-          .map_err(|e| ::GenError::RawOsError(e)));
+        try!(setregs(self.pid, &n_regs));
+        try!(cont(self.pid, ipc::signals::Signal::None));
         unsafe { waitpid(self.pid, ptr::null_mut(), 0) };
         let m_regs = try!(getregs(self.pid));
-        try!(setregs(self.pid, &o_regs)
-          .map_err(|e| ::GenError::RawOsError(e)));
-        try!(writer.poke_data(n_regs.rip, o_rip)
-          .map_err(|e| ::GenError::RawOsError(e)));
+        try!(setregs(self.pid, &o_regs));
+        try!(writer.poke_data(n_regs.rip, o_rip));
         Ok((m_regs.rax))
     }
 }

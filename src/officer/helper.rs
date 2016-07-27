@@ -188,7 +188,7 @@ mod tests {
         Command::new("/usr/bin/make")
           .current_dir("./files/c")
           .arg("all")
-          .spawn()
+          .status()
           .expect("failed to make");
         try_on_dwarf(filepath, var_name, filename);
     }

@@ -205,6 +205,15 @@ impl AbbrevDeclAttrSpec {
                     _ => { panic!("oh my guinness") },
                 }
             },
+            CLASS::V4PTRS => {
+                let mut buf = match comp_unit_header.dwarf_bit {
+                    32u8 => { vec![0; 4] },
+                    64u8 => { vec![0; 8] },
+                    _ => { panic!("oh my guinness") },
+                };
+                rdr.read(&mut buf);
+                Ok(buf)
+            },
             CLASS::UNKNOWN => {
                 unimplemented!()
             }
@@ -515,7 +524,7 @@ impl DW_FORM {
             DW_FORM_REF8 => CLASS::REFERENCE,
             DW_FORM_REF_UDATA => CLASS::REFERENCE,
             DW_FORM_INDIRECT => CLASS::UNKNOWN,
-            DW_FORM_SEC_OFFSET => CLASS::UNKNOWN,
+            DW_FORM_SEC_OFFSET => CLASS::V4PTRS,
             DW_FORM_EXPRLOC => CLASS::EXPRLOC,
             DW_FORM_FLAG_PRESENT => CLASS::FLAG,
             DW_FORM_REF_SIG8 => CLASS::REFERENCE,
@@ -532,6 +541,7 @@ pub enum CLASS {
     FLAG,
     REFERENCE,
     STRING,
+    V4PTRS,
     UNKNOWN,
 }
 
@@ -637,6 +647,7 @@ macro_rules! search_debug_info {
         loop {
             let abbrev_number = rdr.read_leb128().unwrap();
             if rdr.position() == rdr.get_ref().len() as u64 { break }
+            if abbrev_number == 0 { continue }
             let abbrev_decl: &AbbrevDecl = $abbrev_decls.search_by_code(abbrev_number).unwrap();
             let tag: DW_TAG = abbrev_decl.tag;
             let mut skip: bool = false;

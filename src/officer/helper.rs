@@ -144,6 +144,7 @@ mod tests {
     use libc;
     use std::ptr::copy_nonoverlapping;
     use std::ffi::CString;
+    use std::process::Command;
 
     #[test]
     fn test_dump_canvas() {
@@ -179,8 +180,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_try_on_dwarf() {
-        unimplemented!();
+        //let filepath = String::from("./files/c/test1");
+        let filepath = String::from("./files/c/test1");
+        let var_name = String::from("s_buf");
+        let filename = String::from("test1.c");
+        Command::new("/usr/bin/make")
+          .current_dir("./files/c")
+          .arg("all")
+          .spawn()
+          .expect("failed to make");
+        try_on_dwarf(filepath, var_name, filename);
     }
 }

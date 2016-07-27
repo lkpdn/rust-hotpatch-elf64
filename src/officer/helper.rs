@@ -190,6 +190,6 @@ mod tests {
           .arg("all")
           .status()
           .expect("failed to make");
-        try_on_dwarf(filepath, var_name, filename);
+        assert_eq!(try_on_dwarf(filepath, var_name, filename).unwrap(), 0x601050);
     }
 }

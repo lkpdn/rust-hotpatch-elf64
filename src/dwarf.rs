@@ -143,8 +143,13 @@ impl AbbrevDeclAttrSpec {
             },
             CLASS::EXPRLOC => {
                 let read_size = rdr.read_leb128().unwrap();
+                let op = rdr.read_u8().unwrap();
+                let num_of_operands = DW_OP(op).num_of_operands();
+                if num_of_operands == 0 {
+                    return Ok(vec![op;1])
+                }
                 let position = rdr.position();
-                let new_position = position + read_size;
+                let new_position = position + read_size - 1;
                 rdr.set_position(new_position);
                 Ok(rdr.get_ref()[position as usize..new_position as usize].to_vec())
             },
@@ -545,6 +550,101 @@ pub enum CLASS {
     UNKNOWN,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct DW_OP(pub u8);
+pub const DW_OP_ADDR : DW_OP = DW_OP(0x03);
+pub const DW_OP_DEREF : DW_OP = DW_OP(0x06);
+pub const DW_OP_CONST1U : DW_OP = DW_OP(0x08);
+pub const DW_OP_CONST1S : DW_OP = DW_OP(0x09);
+pub const DW_OP_CONST2U : DW_OP = DW_OP(0x0a);
+pub const DW_OP_CONST2S : DW_OP = DW_OP(0x0b);
+pub const DW_OP_CONST4U : DW_OP = DW_OP(0x0c);
+pub const DW_OP_CONST4S : DW_OP = DW_OP(0x0d);
+pub const DW_OP_CONST8U : DW_OP = DW_OP(0x0e);
+pub const DW_OP_CONST8S : DW_OP = DW_OP(0x0f);
+pub const DW_OP_CONSTU : DW_OP = DW_OP(0x10);
+pub const DW_OP_CONSTS : DW_OP = DW_OP(0x11);
+pub const DW_OP_DUP : DW_OP = DW_OP(0x12);
+pub const DW_OP_DROP : DW_OP = DW_OP(0x13);
+pub const DW_OP_OVER : DW_OP = DW_OP(0x14);
+pub const DW_OP_PICK : DW_OP = DW_OP(0x15);
+pub const DW_OP_SWAP : DW_OP = DW_OP(0x16);
+pub const DW_OP_ROT : DW_OP = DW_OP(0x17);
+pub const DW_OP_XDEREF : DW_OP = DW_OP(0x18);
+pub const DW_OP_ABS : DW_OP = DW_OP(0x19);
+pub const DW_OP_AND : DW_OP = DW_OP(0x1a);
+pub const DW_OP_DIV : DW_OP = DW_OP(0x1b);
+pub const DW_OP_MINUS : DW_OP = DW_OP(0x1c);
+pub const DW_OP_MOD : DW_OP = DW_OP(0x1d);
+pub const DW_OP_MUL : DW_OP = DW_OP(0x1e);
+pub const DW_OP_NEG : DW_OP = DW_OP(0x1f);
+pub const DW_OP_NOT : DW_OP = DW_OP(0x20);
+pub const DW_OP_OR : DW_OP = DW_OP(0x21);
+pub const DW_OP_PLUS : DW_OP = DW_OP(0x22);
+pub const DW_OP_PLUS_UCONST : DW_OP = DW_OP(0x23);
+pub const DW_OP_SHL : DW_OP = DW_OP(0x24);
+pub const DW_OP_SHR : DW_OP = DW_OP(0x25);
+pub const DW_OP_SHRA : DW_OP = DW_OP(0x26);
+pub const DW_OP_XOR : DW_OP = DW_OP(0x27);
+pub const DW_OP_SKIP : DW_OP = DW_OP(0x2f);
+pub const DW_OP_BRA : DW_OP = DW_OP(0x28);
+pub const DW_OP_EQ : DW_OP = DW_OP(0x29);
+pub const DW_OP_GE : DW_OP = DW_OP(0x2a);
+pub const DW_OP_GT : DW_OP = DW_OP(0x2b);
+pub const DW_OP_LE : DW_OP = DW_OP(0x2c);
+pub const DW_OP_LT : DW_OP = DW_OP(0x2d);
+pub const DW_OP_NE : DW_OP = DW_OP(0x2e);
+
+impl DW_OP {
+    fn num_of_operands(&self) -> u8 {
+        match *self {
+            DW_OP_ADDR => 1,
+            DW_OP_DEREF => 0,
+            DW_OP_CONST1U => 1,
+            DW_OP_CONST1S => 1,
+            DW_OP_CONST2U => 1,
+            DW_OP_CONST2S => 1,
+            DW_OP_CONST4U => 1,
+            DW_OP_CONST4S => 1,
+            DW_OP_CONST8U => 1,
+            DW_OP_CONST8S => 1,
+            DW_OP_CONSTU => 1,
+            DW_OP_CONSTS => 1,
+            DW_OP_DUP => 0,
+            DW_OP_DROP => 0,
+            DW_OP_OVER => 0,
+            DW_OP_PICK => 1,
+            DW_OP_SWAP => 0,
+            DW_OP_ROT => 0,
+            DW_OP_XDEREF => 0,
+            DW_OP_ABS => 0,
+            DW_OP_AND => 0,
+            DW_OP_DIV => 0,
+            DW_OP_MINUS => 0,
+            DW_OP_MOD => 0,
+            DW_OP_MUL => 0,
+            DW_OP_NEG => 0,
+            DW_OP_NOT => 0,
+            DW_OP_OR => 0,
+            DW_OP_PLUS => 0,
+            DW_OP_PLUS_UCONST => 1,
+            DW_OP_SHL => 0,
+            DW_OP_SHR => 0,
+            DW_OP_SHRA => 0,
+            DW_OP_XOR => 0,
+            DW_OP_SKIP => 1,
+            DW_OP_BRA => 1,
+            DW_OP_EQ => 0,
+            DW_OP_GE => 0,
+            DW_OP_GT => 0,
+            DW_OP_LE => 0,
+            DW_OP_LT => 0,
+            DW_OP_NE => 0,
+            DW_OP(_) => 0, //{ panic!("oh my guinness") },
+        }
+    }
+}
+
 pub fn consume_leb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
     let mut buf: Vec<u8> = vec![];
     loop {
@@ -608,6 +708,7 @@ macro_rules! search_debug_info {
         $val_type:ty
     ) => {{
         use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+        use std::intrinsics;
         // consume header
         let mut rdr = io::Cursor::new($data.clone());
         let first_4bytes = rdr.read_u32::<LittleEndian>().unwrap();
@@ -659,7 +760,12 @@ macro_rules! search_debug_info {
                 $(
                 let data: Vec<u8> = attr_spec.consume(&mut rdr, compilation_unit_header).unwrap();
                 if $attr_to_get == name {
-                    candidates.push( unsafe { mem::transmute(data.as_ptr() as $val_type) } );
+                    unsafe {
+                        candidates.push(match intrinsics::type_name::<$val_type>() {
+                            "u64" => { data.as_slice().read_u64::<LittleEndian>().unwrap() },
+                            _ => { mem::transmute(data.as_ptr() as $val_type) },
+                        });
+                    }
                 }
                 if !skip && $attr == name {
                     if ! data.starts_with($val) { skip = true }

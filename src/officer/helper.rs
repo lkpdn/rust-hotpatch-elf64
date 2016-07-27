@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_try_on_dwarf() {
         //let filepath = String::from("./files/c/test1");
-        let filepath = String::from("./files/c/test1");
+        let filepath = String::from("./files/c/build/test1");
         let var_name = String::from("s_buf");
         let filename = String::from("test1.c");
         Command::new("/usr/bin/make")

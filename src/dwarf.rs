@@ -1,5 +1,5 @@
 use byteorder::ReadBytesExt;
-use std::io::{self, Read};
+use std::io::{self, Read, BufRead};
 use std::mem;
 
 #[derive(Debug, Clone, Copy)]
@@ -8,6 +8,7 @@ pub struct CompilationUnitHeader {
     pub version: u16,
     pub debug_abbrev_offset: u64,
     pub address_size: u8,
+    pub dwarf_bit: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -186,7 +187,23 @@ impl AbbrevDeclAttrSpec {
                 }
             },
             CLASS::STRING => {
-                unimplemented!()
+                match self.form {
+                    DW_FORM_STRING => {
+                        let mut buf = Vec::new();
+                        rdr.read_until(0, &mut buf);
+                        Ok(buf)
+                    },
+                    DW_FORM_STRP => {
+                        let mut buf = match comp_unit_header.dwarf_bit {
+                            32u8 => { vec![0; 4] },
+                            64u8 => { vec![0; 8] },
+                            _ => { panic!("oh my guinness") },
+                        };
+                        rdr.read(&mut buf);
+                        Ok(buf)
+                    },
+                    _ => { panic!("oh my guinness") },
+                }
             },
             CLASS::UNKNOWN => {
                 unimplemented!()
@@ -595,6 +612,7 @@ macro_rules! search_debug_info {
                     version: version,
                     debug_abbrev_offset: debug_abbrev_offset,
                     address_size: address_size,
+                    dwarf_bit: 64u8,
                 }
             },
             _ => {
@@ -608,6 +626,7 @@ macro_rules! search_debug_info {
                     version: version,
                     debug_abbrev_offset: debug_abbrev_offset as u64,
                     address_size: address_size,
+                    dwarf_bit: 32u8,
                 }
             }
         };

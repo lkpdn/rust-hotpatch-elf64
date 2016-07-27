@@ -234,10 +234,14 @@ impl FileNameTable {
         for i in 0..(opcode_base - 1) {
             consume_leb128(&mut pile);
         }
-        let filenames_offset = pile.windows(2)
-          .position(|w| w[0] == 0x00 && w[1] == 0x00)
-          .unwrap() + 2;
-        pile.drain(0..filenames_offset);
+        if pile[0] == 0x00 { // Directory table empty
+            pile.remove(0);
+        } else {
+            let filenames_offset = pile.windows(2)
+              .position(|w| w[0] == 0x00 && w[1] == 0x00)
+              .unwrap() + 2;
+            pile.drain(0..filenames_offset);
+        }
         FileNameTable::from_slice_of_table(&pile)
     }
     pub fn from_slice_of_table(sl: &[u8]) -> FileNameTable {

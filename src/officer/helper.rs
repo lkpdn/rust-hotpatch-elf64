@@ -3,10 +3,10 @@ extern crate regex;
 extern crate libc;
 extern crate byteorder;
 extern crate posix_ipc as ipc;
+extern crate ptrace;
 use std::mem;
 use std::ptr;
 use std::io;
-use ptrace_ext::ptrace;
 
 use ::dwarf::*;
 
@@ -88,19 +88,19 @@ pub fn dump_canvas<T: io::Write>(canvas: *mut libc::c_void, buf_size: usize, wri
               }) {
                 0 => {
                     if last_line_zeros == false {
-                        writeln!(writer, "{}", ":");
+                        writeln!(writer, "{}", ":").unwrap();
                     }
                     last_line_zeros = true;
                 },
                 _ => {
                     last_line_zeros = false;
-                    write!(writer, "0x{:0>16x}:", line_start);
+                    write!(writer, "0x{:0>16x}:", line_start).unwrap();
                     for j in 0..buffer.len() {
-                        if j % 8 == 0 { write!(writer, "{}", " "); }
-                        else if j % 4 == 0 { write!(writer, "{}", "_"); }
-                        write!(writer, "{:0>2x}", buffer[j]);
+                        if j % 8 == 0 { write!(writer, "{}", " ").unwrap(); }
+                        else if j % 4 == 0 { write!(writer, "{}", "_").unwrap(); }
+                        write!(writer, "{:0>2x}", buffer[j]).unwrap();
                     }
-                    writeln!(writer, "");
+                    writeln!(writer, "").unwrap();
                 }
             }
         }
@@ -120,7 +120,7 @@ pub fn dump_canvas<T: io::Write>(canvas: *mut libc::c_void, buf_size: usize, wri
     }
 }
 
-pub fn try_on_dwarf(filepath: String, var_name: String, filename: String)
+pub fn try_on_dwarf(filepath: String, _var_name: String, filename: String)
   -> Result<u64, ::GenError> {
     let ef = elf::File::open_path(&filepath).unwrap();
     let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
@@ -181,7 +181,6 @@ mod tests {
 
     #[test]
     fn test_try_on_dwarf() {
-        //let filepath = String::from("./files/c/test1");
         let filepath = String::from("./files/c/build/test1");
         let var_name = String::from("s_buf");
         let filename = String::from("test1.c");

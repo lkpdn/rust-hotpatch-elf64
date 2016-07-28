@@ -13,7 +13,6 @@ use regex::Regex;
 use std::env;
 use std::path::PathBuf;
 use std::io;
-use std::io::prelude::*;
 use std::fmt;
 
 #[macro_use]
@@ -98,8 +97,8 @@ fn main() {
         }
     };
     let target = matches.opt_str("t").unwrap();
-    let so_path = matches.opt_str("so-path").unwrap_or("".to_string());
-    let target_source = matches.opt_str("target-source").unwrap_or("".to_string());
+    let _so_path = matches.opt_str("so-path").unwrap_or("".to_string());
+    let _target_source = matches.opt_str("target-source").unwrap_or("".to_string());
     let _path = PathBuf::from(&target);
 
     let mut officer = Officer::from_pid(pid).unwrap();
@@ -125,7 +124,7 @@ fn main() {
                         let label = cap.name("label").unwrap_or("").to_string();
                         let new_func = cap.name("new_func").unwrap_or("").to_string();
                         info!("replace {} with {}:{}", orig_func, label, new_func);
-                        officer.put_on_trampoline(orig_func, label, new_func)
+                        let _ = officer.put_on_trampoline(orig_func, label, new_func)
                           .map_err(|e| println!("{}", e));
                     }
                 },

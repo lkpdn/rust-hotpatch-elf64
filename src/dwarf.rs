@@ -84,24 +84,24 @@ impl AbbrevDeclAttrSpec {
         match self.form.get_class() {
             CLASS::ADDRESS => {
                 let mut buf = vec![0; comp_unit_header.address_size as usize];
-                rdr.read(&mut buf);
+                let _ = rdr.read(&mut buf);
                 Ok(buf)
             },
             CLASS::BLOCK => {
                 match self.form {
                     DW_FORM_BLOCK1 => {
                         let mut buf = vec![0; 1];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_BLOCK2 => {
                         let mut buf = vec![0; 2];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_BLOCK4 => {
                         let mut buf = vec![0; 4];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_BLOCK => {
@@ -114,22 +114,22 @@ impl AbbrevDeclAttrSpec {
                 match self.form {
                     DW_FORM_DATA1 => {
                         let mut buf = vec![0; 1];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_DATA2 => {
                         let mut buf = vec![0; 2];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_DATA4 => {
                         let mut buf = vec![0; 4];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_DATA8 => {
                         let mut buf = vec![0; 8];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_SDATA => {
@@ -167,22 +167,22 @@ impl AbbrevDeclAttrSpec {
                 match self.form {
                     DW_FORM_REF1 => {
                         let mut buf = vec![0; 1];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_REF2 => {
                         let mut buf = vec![0; 2];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_REF4 => {
                         let mut buf = vec![0; 4];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_REF8 => {
                         let mut buf = vec![0; 8];
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     DW_FORM_REF_UDATA => {
@@ -195,7 +195,7 @@ impl AbbrevDeclAttrSpec {
                 match self.form {
                     DW_FORM_STRING => {
                         let mut buf = Vec::new();
-                        rdr.read_until(0, &mut buf);
+                        let _ = rdr.read_until(0, &mut buf);
                         Ok(buf)
                     },
                     DW_FORM_STRP => {
@@ -204,7 +204,7 @@ impl AbbrevDeclAttrSpec {
                             64u8 => { vec![0; 8] },
                             _ => { panic!("oh my guinness") },
                         };
-                        rdr.read(&mut buf);
+                        let _ = rdr.read(&mut buf);
                         Ok(buf)
                     },
                     _ => { panic!("oh my guinness") },
@@ -216,7 +216,7 @@ impl AbbrevDeclAttrSpec {
                     64u8 => { vec![0; 8] },
                     _ => { panic!("oh my guinness") },
                 };
-                rdr.read(&mut buf);
+                let _ = rdr.read(&mut buf);
                 Ok(buf)
             },
             CLASS::UNKNOWN => {
@@ -242,28 +242,25 @@ pub struct FileNameTable {
 
 impl FileNameTable {
     pub fn from_debug_line(debug_line: Vec<u8>) -> FileNameTable {
-        let mut opcode_base: u8 = 0;
-        let sol_offset = match &debug_line[0..4] {
+        let (sol_offset, opcode_base) = match &debug_line[0..4] {
             // unit_length(12/4) + version(2/2) + header_length(8/4)
             // + minimum_instruction_length(1/1)
             // + default_is_stmt(1/1) + line_base(1/1) + line_range(1/1)
             // + opcode_base(1/1) + standard_opcode_lengths(LEB128 × (opcode_base -1))
             // + include_directories(sequence of null-terminated strings)
             &[0xff, 0xff, 0xff, 0xff] => {
-                opcode_base = debug_line[26];
-                12 + 2 + 8 + 1 + 1 + 1 + 1 + 1
+                (12 + 2 + 8 + 1 + 1 + 1 + 1 + 1, debug_line[26])
             },
             _ => {
-                opcode_base = debug_line[14];
-                4 + 2 + 4 + 1 + 1 + 1 + 1 + 1
+                (4 + 2 + 4 + 1 + 1 + 1 + 1 + 1, debug_line[14])
             }
         };
         let mut pile = debug_line.clone();
 
         // standard_opcode_lengths(LEB128 × (opcode_base -1))
         pile.drain(0..sol_offset);
-        for i in 0..(opcode_base - 1) {
-            consume_leb128(&mut pile);
+        for _ in 0..(opcode_base - 1) {
+            let _ = consume_leb128(&mut pile);
         }
         if pile[0] == 0x00 { // Directory table empty
             pile.remove(0);
@@ -310,6 +307,7 @@ impl FileNameTable {
 /*
  * Format and debugging information
  */
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DW_TAG(pub u32);
 pub const DW_TAG_ARRAY_TYPE : DW_TAG = DW_TAG(0x01);
@@ -375,11 +373,13 @@ pub const DW_TAG_TEMPLATE_ALIAS : DW_TAG = DW_TAG(0x43);
 pub const DW_TAG_LO_USER : DW_TAG = DW_TAG(0x4080);
 pub const DW_TAG_HI_USER : DW_TAG = DW_TAG(0xffff);
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DW_CHILDREN(pub u8);
 pub const DW_CHILDREN_NO : DW_CHILDREN = DW_CHILDREN(0x00);
 pub const DW_CHILDREN_YES : DW_CHILDREN = DW_CHILDREN(0x01);
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DW_AT(pub u16);
 pub const DW_AT_SIBLING : DW_AT = DW_AT(0x01);
@@ -477,6 +477,7 @@ pub const DW_AT_LINKAGE_NAME : DW_AT = DW_AT(0x6e);
 pub const DW_AT_LO_USER : DW_AT = DW_AT(0x2000);
 pub const DW_AT_HI_USER : DW_AT = DW_AT(0x3fff);
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DW_FORM(pub u16);
 pub const DW_FORM_ADDR : DW_FORM = DW_FORM(0x01);
@@ -550,6 +551,7 @@ pub enum CLASS {
     UNKNOWN,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DW_OP(pub u8);
 pub const DW_OP_ADDR : DW_OP = DW_OP(0x03);
@@ -935,7 +937,7 @@ macro_rules! search_debug_info {
         $attr_to_get:expr,
         $val_type:ty
     ) => {{
-        use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+        use byteorder::{LittleEndian, ReadBytesExt};
         use std::intrinsics;
         // consume header
         let mut rdr = io::Cursor::new($data.clone());
@@ -983,8 +985,6 @@ macro_rules! search_debug_info {
             if tag != $tag { skip = true }
             for attr_spec in &abbrev_decl.attr_specs {
                 let name: DW_AT = attr_spec.name;
-                let form: DW_FORM = attr_spec.form;
-                let klass = form.get_class();
                 $(
                 let data: Vec<u8> = attr_spec.consume(&mut rdr, compilation_unit_header).unwrap();
                 if $attr_to_get == name {

@@ -3,6 +3,7 @@ extern crate regex;
 extern crate libc;
 extern crate byteorder;
 extern crate posix_ipc as ipc;
+extern crate ptrace;
 use log::LogLevel;
 use byteorder::{ByteOrder, LittleEndian};
 use regex::Regex;
@@ -17,7 +18,6 @@ use std::time::Duration;
 use std::ptr;
 use std::fmt;
 use std::thread;
-use ptrace_ext::ptrace;
 use ptrace_ext::*;
 
 #[macro_use]
@@ -149,9 +149,9 @@ impl Officer {
               )
             ).unwrap() {
                 true => {
-                    self.release_target();
+                    let _ = self.release_target();
                     thread::sleep(Duration::from_millis(20));
-                    self.attach_target();
+                    let _ = self.attach_target();
                 },
                 false => { break }
             }
@@ -346,7 +346,6 @@ impl SymbolIdent {
 #[cfg(test)]
 mod tests {
     extern crate libc;
-    use std::ptr;
     use super::Officer;
 
     #[test]
@@ -374,7 +373,5 @@ mod tests {
     extern "C" {
         fn fork() -> libc::pid_t;
         fn raise(signal: libc::c_int) -> libc::c_int;
-        fn waitpid(pid: libc::pid_t, status: *mut libc::c_int,
-          options: libc::c_int) -> libc::c_int;
     }
 }

@@ -7,4 +7,4 @@ all: $(EXE)
 	@-mkdir build
 	@$(CC) $< -o ./build/$@ $(CFLAGS) $(CPPFLAGS)
 clean:
-	@rm $(EXE)
+	@rm ./build/$(EXE)

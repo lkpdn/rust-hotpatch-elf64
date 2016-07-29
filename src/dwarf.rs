@@ -48,13 +48,13 @@ impl AbbrevDecl {
     pub fn from_slice(sl: &[u8]) -> AbbrevDecl {
         let mut vc = sl.to_vec();
         let mut size = vc.len();
-        let code = consume_leb128(&mut vc).unwrap();
-        let tag = consume_leb128(&mut vc).unwrap() as u32;
-        let children = consume_leb128(&mut vc).unwrap() as u8;
+        let code = consume_uleb128(&mut vc).unwrap();
+        let tag = consume_uleb128(&mut vc).unwrap() as u32;
+        let children = consume_uleb128(&mut vc).unwrap() as u8;
         let mut attr_specs: Vec<AbbrevDeclAttrSpec> = Vec::new();
         while vc.len() > 0 {
-            let name = consume_leb128(&mut vc).unwrap() as u16;
-            let form = consume_leb128(&mut vc).unwrap() as u16;
+            let name = consume_uleb128(&mut vc).unwrap() as u16;
+            let form = consume_uleb128(&mut vc).unwrap() as u16;
             if name == 0 && form == 0 { break }
             attr_specs.push(AbbrevDeclAttrSpec {
                 name: DW_AT(name),
@@ -260,7 +260,7 @@ impl FileNameTable {
         // standard_opcode_lengths(LEB128 × (opcode_base -1))
         pile.drain(0..sol_offset);
         for _ in 0..(opcode_base - 1) {
-            let _ = consume_leb128(&mut pile);
+            let _ = consume_uleb128(&mut pile);
         }
         if pile[0] == 0x00 { // Directory table empty
             pile.remove(0);
@@ -282,9 +282,9 @@ impl FileNameTable {
             use std::str::from_utf8;
             let name = from_utf8(&vc[0..terminator]).unwrap().to_string();
             vc.drain(0..terminator);
-            let dir = consume_leb128(&mut vc).unwrap() as u8;
-            let time = consume_leb128(&mut vc).unwrap() as u8;
-            let size = consume_leb128(&mut vc).unwrap() as u8;
+            let dir = consume_uleb128(&mut vc).unwrap() as u8;
+            let time = consume_uleb128(&mut vc).unwrap() as u8;
+            let size = consume_uleb128(&mut vc).unwrap() as u8;
             vc.remove(0);
             entries.push(FileNameTableEntry {
                 entry: fname_index,
@@ -875,7 +875,7 @@ impl DW_OP {
     }
 }
 
-pub fn consume_leb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
+pub fn consume_uleb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
     let mut buf: Vec<u8> = vec![];
     loop {
         let read = v.remove(0);
@@ -892,8 +892,28 @@ pub fn consume_leb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
     Ok(res)
 }
 
-pub fn consume_leb128_stream(v: &mut Vec<u8>) -> Result<Vec<u8>, ::GenError> {
-    let res: u64 = consume_leb128(v).unwrap();
+pub fn consume_sleb128(v: &mut Vec<u8>) -> Result<i64, ::GenError> {
+    let mut buf: Vec<u8> = vec![];
+    loop {
+        let read = v.remove(0);
+        buf.push(read);
+        if read & 0b1000_0000 == 0 { break }
+    }
+    let mut res: i64 = 0;
+    let mut shift = 0;
+    for b in &buf {
+        res |= ((b & 0b0111_1111) as i64) << shift;
+        shift += 7;
+        if b & 0b1000_0000 == 0 { break }
+    }
+    if (1 << (shift - 1)) & res != 0 {
+        res |= (-1 as i64) << shift;
+    }
+    Ok(res)
+}
+
+pub fn consume_uleb128_stream(v: &mut Vec<u8>) -> Result<Vec<u8>, ::GenError> {
+    let res: u64 = consume_uleb128(v).unwrap();
     unsafe { Ok(mem::transmute::<u64, [u8;8]>(res).as_ref().to_vec()) }
 }
 
@@ -909,7 +929,7 @@ impl CursorExt for io::Cursor<Vec<u8>> {
         let mut v: Vec<u8> = self.get_ref().clone();
         v.drain(0..position as usize);
         let mut size = v.len() as u64;
-        let result = consume_leb128(&mut v).unwrap();
+        let result = consume_uleb128(&mut v).unwrap();
         size -= v.len() as u64;
         self.set_position(position + size);
         Ok(result)
@@ -920,7 +940,7 @@ impl CursorExt for io::Cursor<Vec<u8>> {
         let mut v: Vec<u8> = self.get_ref().clone();
         v.drain(0..position as usize);
         let mut size = v.len() as u64;
-        let result = consume_leb128_stream(&mut v).unwrap();
+        let result = consume_uleb128_stream(&mut v).unwrap();
         size -= v.len() as u64;
         self.set_position(position + size);
         Ok(result)
@@ -1009,4 +1029,31 @@ macro_rules! search_debug_info {
         }
         results
     }}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{consume_uleb128,consume_sleb128};
+
+    #[test]
+    fn test_consume_uleb128() {
+        assert_eq!(consume_uleb128(&mut vec![0x2u8]).unwrap(), 2);
+        assert_eq!(consume_uleb128(&mut vec![0x7f]).unwrap(), 127);
+        assert_eq!(consume_uleb128(&mut vec![0x80, 0x01]).unwrap(), 128);
+        assert_eq!(consume_uleb128(&mut vec![0x81, 0x01]).unwrap(), 129);
+        assert_eq!(consume_uleb128(&mut vec![0x82, 0x01]).unwrap(), 130);
+        assert_eq!(consume_uleb128(&mut vec![0xb9, 0x64]).unwrap(), 12857);
+    }
+
+    #[test]
+    fn test_consume_sleb128() {
+        assert_eq!(consume_sleb128(&mut vec![0x02]).unwrap(), 2);
+        assert_eq!(consume_sleb128(&mut vec![0x7e]).unwrap(), -2);
+        assert_eq!(consume_sleb128(&mut vec![0xff, 0x00]).unwrap(), 127);
+        assert_eq!(consume_sleb128(&mut vec![0x81, 0x7f]).unwrap(), -127);
+        assert_eq!(consume_sleb128(&mut vec![0x80, 0x01]).unwrap(), 128);
+        assert_eq!(consume_sleb128(&mut vec![0x80, 0x7f]).unwrap(), -128);
+        assert_eq!(consume_sleb128(&mut vec![0x81, 0x01]).unwrap(), 129);
+        assert_eq!(consume_sleb128(&mut vec![0xff, 0x7e]).unwrap(), -129);
+    }
 }

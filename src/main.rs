@@ -13,48 +13,15 @@ use regex::Regex;
 use std::env;
 use std::path::PathBuf;
 use std::io;
-use std::fmt;
+pub mod util;
+use util::GenError;
 
-#[macro_use]
-pub mod dwarf;
 #[macro_use]
 pub mod officer;
-pub mod ptrace_ext;
 use officer::Officer;
-
-#[derive(Debug)]
-pub enum GenError {
-    RawOsError(usize),
-    Plain(String),
-    ElfParseError(elf::ParseError),
-    StdIoError(std::io::Error),
-}
-
-#[derive(Debug)]
-pub struct ElfParseError(elf::ParseError);
-
-impl fmt::Display for ElfParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ElfParseError(elf::ParseError::IoError(ref err)) => write!(f, "{}", err),
-            ElfParseError(elf::ParseError::InvalidMagic) => write!(f, "{}", "ElfParseError: Invalid magic"),
-            ElfParseError(elf::ParseError::InvalidFormat(Some(ref err))) => write!(f, "{}", err),
-            ElfParseError(elf::ParseError::InvalidFormat(None)) => write!(f, "{}", "?"),
-            ElfParseError(elf::ParseError::NotImplemented) => write!(f, "{}", "ElfParseError: Not implemented"),
-        }
-    }
-}
-
-impl fmt::Display for GenError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GenError::RawOsError(ref err) => write!(f, "Raw os error: {}", err),
-            GenError::Plain(ref err) => write!(f, "{}", err),
-            GenError::ElfParseError(_) => write!(f, "{}", self),
-            GenError::StdIoError(ref err) => write!(f, "{}", err),
-        }
-    }
-}
+#[macro_use]
+pub mod lib;
+use lib::dwarf::*;
 
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
@@ -145,4 +112,40 @@ fn main() {
         buffer.clear();
     };
     officer.release_target().expect("cannot release");
+}
+
+pub fn try_on_dwarf(filepath: String, _var_name: String, filename: String)
+  -> Result<u64, GenError> {
+    let ef = elf::File::open_path(&filepath).unwrap();
+    let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
+    let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
+    let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
+    let file_name_table = FileNameTable::from_debug_line(debug_line);
+    let fname_entry = file_name_table.search_filename(filename).unwrap().entry;
+    let debug_info: Vec<u8> = ef.get_section(".debug_info").unwrap().data.clone();
+    let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
+      DW_TAG => DW_TAG_VARIABLE,
+      DW_AT_DECL_FILE => &[fname_entry]
+    }, DW_AT_LOCATION, u64);
+    if result.len() > 1 { Err(GenError::Plain("cannot choose appropriate one".to_string())) }
+    else if result.len() == 1 { Ok(result[0]) }
+    else { Err(GenError::Plain("it was a fruitless try".to_string())) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+    #[test]
+    fn test_try_on_dwarf() {
+        let filepath = String::from("./files/c/build/test1");
+        let var_name = String::from("s_buf");
+        let filename = String::from("test1.c");
+        Command::new("/usr/bin/make")
+          .current_dir("./files/c")
+          .arg("all")
+          .status()
+          .expect("failed to make");
+        assert_eq!(try_on_dwarf(filepath, var_name, filename).unwrap(), 0x601050);
+    }
 }

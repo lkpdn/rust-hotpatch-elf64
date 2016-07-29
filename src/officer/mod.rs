@@ -18,8 +18,9 @@ use std::time::Duration;
 use std::ptr;
 use std::fmt;
 use std::thread;
-use ptrace_ext::*;
+use lib::ptrace::*;
 
+use util::GenError;
 #[macro_use]
 pub mod helper;
 use self::helper::*;
@@ -45,14 +46,14 @@ impl Officer {
             }
         }
     }
-    pub fn from_pid(pid: i32) -> Result<Officer, ::GenError> {
+    pub fn from_pid(pid: i32) -> Result<Officer, GenError> {
         let mut target = Target {
             pid: pid,
             symbols: vec![],
             source_path: PathBuf::from(String::new()),
         };
         let maps =try!(fs::File::open(format!("/proc/{}/maps", &target.pid))
-          .map_err(|e| ::GenError::StdIoError(e)));
+          .map_err(|e| GenError::StdIoError(e)));
         let mut br = BufReader::new(maps);
         let mut buffer = String::new();
         let mut read_ones = Vec::new();
@@ -101,23 +102,23 @@ impl Officer {
             parasites: vec![],
         })
     }
-    pub fn attach_target(&self) -> Result<i64, ::GenError> {
+    pub fn attach_target(&self) -> Result<i64, GenError> {
         ptrace::attach(self.target.pid)
-          .map_err(|e| ::GenError::RawOsError(e))
+          .map_err(|e| GenError::RawOsError(e))
     }
-    pub fn release_target(&self) -> Result<i64, ::GenError> {
+    pub fn release_target(&self) -> Result<i64, GenError> {
         ptrace::release(self.target.pid, ipc::signals::Signal::None)
-          .map_err(|e| ::GenError::RawOsError(e))
+          .map_err(|e| GenError::RawOsError(e))
     }
     pub fn put_on_trampoline(&mut self, orig_func: String, label: String, new_func: String)
-      -> Result<(), ::GenError> {
+      -> Result<(), GenError> {
         let parasite = try!(self.parasites.iter().by_ref()
           .find(|p| p.label == label)
-          .ok_or(::GenError::Plain(format!("`{}` not loaded", label)))
+          .ok_or(GenError::Plain(format!("`{}` not loaded", label)))
         );
         let orig_func_symbol = try!(self.target.symbols.iter().by_ref()
           .find(|s| s.symbol.name == orig_func)
-          .ok_or(::GenError::Plain(format!("`{}` not found in target", orig_func)))
+          .ok_or(GenError::Plain(format!("`{}` not found in target", orig_func)))
         );
         let gap_to_next = self.target.symbols.iter().by_ref().fold(::std::u64::MAX, |acc, x| {
             if x.symbol.value <= orig_func_symbol.symbol.value { return acc }
@@ -127,7 +128,7 @@ impl Officer {
         }) as usize;
         let new_func_symbol = try!(parasite.symbols.iter().by_ref()
           .find(|s| s.symbol.name == new_func)
-          .ok_or(::GenError::Plain(format!("`{}` not found in {}", new_func, label)))
+          .ok_or(GenError::Plain(format!("`{}` not found in {}", new_func, label)))
         );
         let new_func_addr = unsafe {
             mem::transmute::<u64, [u8; 8]>(
@@ -160,10 +161,10 @@ impl Officer {
         try!(set_data(self.target.pid, orig_func_symbol.symbol.value, code.clone(), code.len()));
         Ok(())
     }
-    pub fn dl(&mut self, idx: usize) -> Result<(), ::GenError> {
+    pub fn dl(&mut self, idx: usize) -> Result<(), GenError> {
         let parasite = &mut self.parasites[idx];
         let ef = try!(elf::File::open_path(PathBuf::from(&parasite.filepath))
-          .map_err(|e| ::GenError::ElfParseError(e)));
+          .map_err(|e| GenError::ElfParseError(e)));
         // SHF_WRITE, SHF_ALLOC ONLY
         let secs = ef.sections
           .iter()
@@ -198,7 +199,7 @@ impl Officer {
 
             let sec_dynsym = ef.get_section(".dynsym").unwrap();
             let dynsyms = try!(ef.get_symbols(sec_dynsym)
-              .map_err(|e| ::GenError::ElfParseError(e)));
+              .map_err(|e| GenError::ElfParseError(e)));
 
             map_it!(ef, ".rela.dyn", dynsyms, &self.target.symbols, canvas);
             map_it!(ef, ".rela.plt", dynsyms, &self.target.symbols, canvas);
@@ -236,7 +237,7 @@ impl Officer {
         }
         Ok(())
     }
-    pub fn set_target_source(&mut self, file_path: String) -> Result<(), ::GenError> {
+    pub fn set_target_source(&mut self, file_path: String) -> Result<(), GenError> {
         self.target.set_source_path(file_path)
     }
 }
@@ -248,13 +249,13 @@ struct Target {
 }
 
 impl Target {
-    fn set_source_path(&mut self, file_path: String) -> Result<(), ::GenError> {
+    fn set_source_path(&mut self, file_path: String) -> Result<(), GenError> {
         let path = Path::new(&file_path);
         if path.exists() {
             self.source_path = path.to_owned();
             Ok(())
         } else {
-            Err(::GenError::Plain(format!("No such file: {}", file_path)))
+            Err(GenError::Plain(format!("No such file: {}", file_path)))
         }
     }
 }
@@ -277,8 +278,7 @@ impl Parasite {
             symbols: vec![],
         }
     }
-    fn target_alloc(&self, siz: u64) -> Result<u64, ::GenError> {
-        use ptrace_ext::SyscallExt;
+    fn target_alloc(&self, siz: u64) -> Result<u64, GenError> {
         let syscall = ptrace::Syscall {
             args: [
                 0,
@@ -297,11 +297,11 @@ impl Parasite {
             Ok(ret) => {
                 let reti = ret as i64;
                 if reti > -4096 && reti < 0 {
-                    Err(::GenError::RawOsError(-reti as usize))
+                    Err(GenError::RawOsError(-reti as usize))
                 } else { Ok(ret) }
             },
             Err(e) => {
-                Err(::GenError::RawOsError(e))
+                Err(GenError::RawOsError(e))
             }
         }
     }

@@ -4,6 +4,7 @@ extern crate posix_ipc as ipc;
 use self::ptrace::*;
 use std::ptr;
 use std::ops::Range;
+use util::GenError;
 
 pub trait SyscallExt {
     fn dispatch(&self) -> Result<u64, usize>;
@@ -40,8 +41,8 @@ impl SyscallExt for Syscall {
 }
 
 pub fn check_range_contains_rip(pid: i32, rng: Range<u64>)
-  -> Result<bool, ::GenError> {
-    let regs = try!(getregs(pid).map_err(|e| ::GenError::RawOsError(e)));
+  -> Result<bool, GenError> {
+    let regs = try!(getregs(pid).map_err(|e| GenError::RawOsError(e)));
     if rng.contains(regs.rip) { Ok(true) }
     else { Ok(false) }
 }

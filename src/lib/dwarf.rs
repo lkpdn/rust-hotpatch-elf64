@@ -1,6 +1,7 @@
 use byteorder::ReadBytesExt;
 use std::io::{self, Read, BufRead};
 use std::mem;
+use util::GenError;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompilationUnitHeader {
@@ -28,10 +29,10 @@ impl AbbrevDecls {
         }
         AbbrevDecls { decls: decls }
     }
-    pub fn search_by_code(&self, code: u64) -> Result<&AbbrevDecl, ::GenError> {
+    pub fn search_by_code(&self, code: u64) -> Result<&AbbrevDecl, GenError> {
         self.decls.iter().by_ref()
           .find(|e| e.code == code)
-          .ok_or(::GenError::Plain(format!("AbbrevDecls: `code: {}` not found", code)))
+          .ok_or(GenError::Plain(format!("AbbrevDecls: `code: {}` not found", code)))
     }
 }
 
@@ -80,7 +81,7 @@ pub struct AbbrevDeclAttrSpec {
 
 impl AbbrevDeclAttrSpec {
     pub fn consume(&self, rdr: &mut io::Cursor<Vec<u8>>, comp_unit_header: CompilationUnitHeader)
-      -> Result<Vec<u8>, ::GenError> {
+      -> Result<Vec<u8>, GenError> {
         match self.form.get_class() {
             CLASS::ADDRESS => {
                 let mut buf = vec![0; comp_unit_header.address_size as usize];
@@ -297,10 +298,10 @@ impl FileNameTable {
         }
         FileNameTable { entries: entries }
     }
-    pub fn search_filename(&self, filename: String) -> Result<&FileNameTableEntry, ::GenError> {
+    pub fn search_filename(&self, filename: String) -> Result<&FileNameTableEntry, GenError> {
         self.entries.iter().by_ref()
           .find(|e| e.name == filename)
-          .ok_or(::GenError::Plain(format!("FileNameTable.search_filename: `name: {}` not found", filename)))
+          .ok_or(GenError::Plain(format!("FileNameTable.search_filename: `name: {}` not found", filename)))
     }
 }
 
@@ -875,7 +876,7 @@ impl DW_OP {
     }
 }
 
-pub fn consume_uleb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
+pub fn consume_uleb128(v: &mut Vec<u8>) -> Result<u64, GenError> {
     let mut buf: Vec<u8> = vec![];
     loop {
         let read = v.remove(0);
@@ -892,7 +893,7 @@ pub fn consume_uleb128(v: &mut Vec<u8>) -> Result<u64, ::GenError> {
     Ok(res)
 }
 
-pub fn consume_sleb128(v: &mut Vec<u8>) -> Result<i64, ::GenError> {
+pub fn consume_sleb128(v: &mut Vec<u8>) -> Result<i64, GenError> {
     let mut buf: Vec<u8> = vec![];
     loop {
         let read = v.remove(0);
@@ -912,18 +913,18 @@ pub fn consume_sleb128(v: &mut Vec<u8>) -> Result<i64, ::GenError> {
     Ok(res)
 }
 
-pub fn consume_uleb128_stream(v: &mut Vec<u8>) -> Result<Vec<u8>, ::GenError> {
+pub fn consume_uleb128_stream(v: &mut Vec<u8>) -> Result<Vec<u8>, GenError> {
     let res: u64 = consume_uleb128(v).unwrap();
     unsafe { Ok(mem::transmute::<u64, [u8;8]>(res).as_ref().to_vec()) }
 }
 
 pub trait CursorExt {
-    fn read_leb128(&mut self) -> Result<u64, ::GenError>;
-    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, ::GenError>;
+    fn read_leb128(&mut self) -> Result<u64, GenError>;
+    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, GenError>;
 }
 
 impl CursorExt for io::Cursor<Vec<u8>> {
-    fn read_leb128(&mut self) -> Result<u64, ::GenError> {
+    fn read_leb128(&mut self) -> Result<u64, GenError> {
         // XXX: avoid inefficient cloning
         let position = self.position();
         let mut v: Vec<u8> = self.get_ref().clone();
@@ -934,7 +935,7 @@ impl CursorExt for io::Cursor<Vec<u8>> {
         self.set_position(position + size);
         Ok(result)
     }
-    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, ::GenError> {
+    fn read_leb128_stream(&mut self) -> Result<Vec<u8>, GenError> {
         // XXX: avoid inefficient cloning
         let position = self.position();
         let mut v: Vec<u8> = self.get_ref().clone();
@@ -959,6 +960,7 @@ macro_rules! search_debug_info {
     ) => {{
         use byteorder::{LittleEndian, ReadBytesExt};
         use std::intrinsics;
+        use std::mem;
         // consume header
         let mut rdr = io::Cursor::new($data.clone());
         let first_4bytes = rdr.read_u32::<LittleEndian>().unwrap();

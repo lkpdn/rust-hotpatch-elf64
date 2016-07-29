@@ -7,8 +7,7 @@ extern crate ptrace;
 use std::mem;
 use std::ptr;
 use std::io;
-
-use ::dwarf::*;
+use util::GenError;
 
 macro_rules! map_it {
     (
@@ -63,11 +62,11 @@ macro_rules! map_it {
     };
 }
 
-pub fn set_data(pid:i32, addr: u64, buf: Vec<u8>, size: usize) -> Result<(), ::GenError> {
+pub fn set_data(pid:i32, addr: u64, buf: Vec<u8>, size: usize) -> Result<(), GenError> {
     let writer = ptrace::Writer::new(pid);
     info!("set_data(addr:{}, size:{})", addr, size);
     writer.write_data(addr as u64, &buf)
-      .map_err(|e| ::GenError::RawOsError(e))
+      .map_err(|e| GenError::RawOsError(e))
 }
 
 pub fn dump_canvas<T: io::Write>(canvas: *mut libc::c_void, buf_size: usize, writer: &mut T) {
@@ -116,31 +115,12 @@ pub fn dump_canvas<T: io::Write>(canvas: *mut libc::c_void, buf_size: usize, wri
     }
 }
 
-pub fn try_on_dwarf(filepath: String, _var_name: String, filename: String)
-  -> Result<u64, ::GenError> {
-    let ef = elf::File::open_path(&filepath).unwrap();
-    let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
-    let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
-    let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
-    let file_name_table = FileNameTable::from_debug_line(debug_line);
-    let fname_entry = file_name_table.search_filename(filename).unwrap().entry;
-    let debug_info: Vec<u8> = ef.get_section(".debug_info").unwrap().data.clone();
-    let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
-      DW_TAG => DW_TAG_VARIABLE,
-      DW_AT_DECL_FILE => &[fname_entry]
-    }, DW_AT_LOCATION, u64);
-    if result.len() > 1 { Err(::GenError::Plain("cannot choose appropriate one".to_string())) }
-    else if result.len() == 1 { Ok(result[0]) }
-    else { Err(::GenError::Plain("it was a fruitless try".to_string())) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use libc;
     use std::ptr::copy_nonoverlapping;
     use std::ffi::CString;
-    use std::process::Command;
 
     #[test]
     fn test_dump_canvas() {
@@ -173,18 +153,5 @@ mod tests {
             libc::free(canvas);
         }
         assert_eq!(w[227..232], [10, 58, 10, 48, 120]);
-    }
-
-    #[test]
-    fn test_try_on_dwarf() {
-        let filepath = String::from("./files/c/build/test1");
-        let var_name = String::from("s_buf");
-        let filename = String::from("test1.c");
-        Command::new("/usr/bin/make")
-          .current_dir("./files/c")
-          .arg("all")
-          .status()
-          .expect("failed to make");
-        assert_eq!(try_on_dwarf(filepath, var_name, filename).unwrap(), 0x601050);
     }
 }

@@ -98,15 +98,20 @@ fn main() {
     };
     let target = matches.opt_str("t").unwrap();
     let _so_path = matches.opt_str("so-path").unwrap_or("".to_string());
-    let _target_source = matches.opt_str("target-source").unwrap_or("".to_string());
+    let target_source = matches.opt_str("target-source").unwrap_or(String::new());
     let _path = PathBuf::from(&target);
 
     let mut officer = Officer::from_pid(pid).unwrap();
     officer.attach_target().expect("cannot attach");
+    if !target_source.is_empty() {
+        let _ = officer.set_target_source(target_source)
+          .map_err(|e| println!("{}", e));
+    }
 
     let ops = vec![
         Regex::new(r"^dl (?P<so_path>\S+) as (?P<label>\S+)").unwrap(),
         Regex::new(r"^replace (?P<orig_func>\S+) with (?P<label>\S+):(?P<new_func>\S+)").unwrap(),
+        Regex::new(r"^set target_source (?P<target_source>").unwrap(),
     ];
     let mut buffer = String::new();
     'loop_line: while io::stdin().read_line(&mut buffer).unwrap() > 0 {
@@ -125,6 +130,10 @@ fn main() {
                         let new_func = cap.name("new_func").unwrap_or("").to_string();
                         info!("replace {} with {}:{}", orig_func, label, new_func);
                         let _ = officer.put_on_trampoline(orig_func, label, new_func)
+                          .map_err(|e| println!("{}", e));
+                    } else if i == 2 {
+                        let target_source = cap.name("target_source").unwrap_or("").to_string();
+                        let _ = officer.set_target_source(target_source)
                           .map_err(|e| println!("{}", e));
                     }
                 },

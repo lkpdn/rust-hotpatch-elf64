@@ -8,7 +8,7 @@ use log::LogLevel;
 use byteorder::{ByteOrder, LittleEndian};
 use regex::Regex;
 use self::elf::types;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::io::BufReader;
 use std::fs;
 use std::io;
@@ -49,6 +49,7 @@ impl Officer {
         let mut target = Target {
             pid: pid,
             symbols: vec![],
+            source_path: PathBuf::from(String::new()),
         };
         let maps =try!(fs::File::open(format!("/proc/{}/maps", &target.pid))
           .map_err(|e| ::GenError::StdIoError(e)));
@@ -235,11 +236,27 @@ impl Officer {
         }
         Ok(())
     }
+    pub fn set_target_source(&mut self, file_path: String) -> Result<(), ::GenError> {
+        self.target.set_source_path(file_path)
+    }
 }
 
 struct Target {
     pid: i32,
     symbols: Vec<SymbolIdent>,
+    source_path: PathBuf,
+}
+
+impl Target {
+    fn set_source_path(&mut self, file_path: String) -> Result<(), ::GenError> {
+        let path = Path::new(&file_path);
+        if path.exists() {
+            self.source_path = path.to_owned();
+            Ok(())
+        } else {
+            Err(::GenError::Plain(format!("No such file: {}", file_path)))
+        }
+    }
 }
 
 struct Parasite {
@@ -253,8 +270,8 @@ struct Parasite {
 impl Parasite {
     fn new(pid: i32) -> Parasite {
         Parasite {
-            label: String::from(""),
-            filepath: String::from(""),
+            label: String::new(),
+            filepath: String::new(),
             addr: 0,
             target_pid: pid,
             symbols: vec![],

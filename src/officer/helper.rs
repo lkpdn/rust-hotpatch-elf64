@@ -31,23 +31,19 @@ macro_rules! map_it {
                     let mut found: Vec<SymbolIdent> = Vec::new();
                     // XXX: decode locally static one's UUID if necessary, in gcc case.
                     for s in $symbol_idents {
-                        if found.len() > 0 &&
-                           found.first().unwrap().symbol.bind == elf::types::STB_GLOBAL {
-                            continue;
-                        }
-                        if st_name == s.symbol.name.as_ref() as &str {
-                            if s.symbol.bind == elf::types::STB_GLOBAL {
-                                found = vec![s.clone()];
-                            }
-                        } else if (st_name.clone() + ".").is_prefix_of(s.symbol.name.as_ref()) {
-                            if s.symbol.bind != elf::types::STB_GLOBAL {
-                                found = vec![s.clone()];
-                            }
+                        if st_name == s.symbol.name.as_ref() as &str &&
+                          s.symbol.bind == elf::types::STB_GLOBAL {
+                            found.push(s.clone());
+                        } else if (st_name.clone() + ".").is_prefix_of(s.symbol.name.as_ref()) &&
+                          s.symbol.bind != elf::types::STB_GLOBAL {
+                            found.push(s.clone());
                         }
                     }
                     if found.len() == 0 {
                         warn!("st_name:{} not found!", st_name);
                         continue;
+                    } else if found.len() > 1 {
+                        unimplemented!();
                     }
                     info!("found: {:?}", found.first().unwrap().symbol.name);
                     info!("r_offset:0x{:0>16x}, st_name:{}", r_offset, st_name);

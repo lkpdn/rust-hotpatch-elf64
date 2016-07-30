@@ -961,6 +961,7 @@ macro_rules! search_debug_info {
         use byteorder::{LittleEndian, ReadBytesExt};
         use std::intrinsics;
         use std::mem;
+        use std::io;
         // consume header
         let mut rdr = io::Cursor::new($data.clone());
         let first_4bytes = rdr.read_u32::<LittleEndian>().unwrap();

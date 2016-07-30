@@ -6,6 +6,7 @@ use std::mem;
 use std::str::pattern::Pattern;
 use self::elf::*;
 use util::GenError;
+use lib::dwarf::*;
 
 pub trait ElfFileExt {
     fn get_sec_rela(&self, sec_name: &str) -> Result<Vec<SecRelaEntry>, GenError>;
@@ -49,70 +50,80 @@ pub struct SecRelaEntry {
     pub fixed: bool,
 }
 
-macro_rules! map_it { (
-    $rela_sec:expr,
-    $symbols:ident,
-    $canvas:ident
-) => {
-    for entry in $rela_sec {
-        if entry.fixed { continue }
-        let mut found: Vec<SymbolIdent> = Vec::new();
-        for s in $symbols {
-            if entry.st_name == s.symbol.name.as_ref() as &str &&
-              s.symbol.bind == elf::types::STB_GLOBAL {
-                found.push(s.clone());
-            } else if (entry.st_name.clone() + ".").is_prefix_of(s.symbol.name.as_ref()) &&
-              s.symbol.bind != elf::types::STB_GLOBAL {
-                found.push(s.clone());
-            }
-        }
-        if found.len() == 0 {
-            warn!("st_name:{} not found", entry.st_name);
-            continue
-        } else if found.len() > 1 {
-            warn!("st_name:{} cannot be fixed", entry.st_name);
-            continue
-        }
-        info!("found: {:?}", found.first().unwrap().symbol.name);
-        info!("r_offset:0x{:0>16x}, st_name:{}", entry.r_offset, entry.st_name);
-        use std::slice;
-        let mut t = unsafe { slice::from_raw_parts_mut(
-            mem::transmute::<*mut libc::c_void, *mut u8>(
-                $canvas.offset(entry.r_offset as isize)
-            ), 8
-        ) };
-        LittleEndian::write_u64(t,
-            found.first().unwrap().offset +
-            found.first().unwrap().symbol.value);
-    }
-}}
-
 pub struct Fixer<'a> {
     pub elf: &'a elf::File,
-    pub rela_dyns: Vec<SecRelaEntry>,
-    pub rela_plts: Vec<SecRelaEntry>,
+    pub relas: Vec<SecRelaEntry>,
 }
 
 impl <'a> Fixer<'a> {
+    #[allow(dead_code)]
     fn from_elf(ef: &'a elf::File) -> Result<Fixer<'a>, GenError> {
-        let sec_dynsym = ef.get_section(".dynsym").unwrap();
-        let dynsyms = try!(ef.get_symbols(sec_dynsym)
-          .map_err(|e| GenError::ElfParseError(e)));
-        let rela_dyns: Vec<SecRelaEntry> = ef.get_sec_rela(".rela.dyn").unwrap();
-        let rela_plts: Vec<SecRelaEntry> = ef.get_sec_rela(".rela.plt").unwrap();
+        let mut relas: Vec<SecRelaEntry> = Vec::new();
+        relas.append(ef.get_sec_rela(".rela.dyn").unwrap().as_mut());
+        relas.append(ef.get_sec_rela(".rela.plt").unwrap().as_mut());
         Ok(Fixer {
             elf: &ef,
-            rela_dyns: rela_dyns,
-            rela_plts: rela_plts,
+            relas: relas,
         })
     }
+    #[allow(dead_code)]
     fn rebuild_and_map(&mut self, symbols: &Vec<SymbolIdent>, canvas: *mut libc::c_void)
       -> Result<(), GenError> {
-        map_it!(&self.rela_dyns, symbols, canvas);
-        map_it!(&self.rela_plts, symbols, canvas);
+        for entry in &self.relas {
+            if entry.fixed { continue }
+            let mut found: Vec<SymbolIdent> = Vec::new();
+            for s in symbols {
+                if entry.st_name == s.symbol.name.as_ref() as &str &&
+                  s.symbol.bind == elf::types::STB_GLOBAL {
+                    found.push(s.clone());
+                } else if (entry.st_name.clone() + ".").is_prefix_of(s.symbol.name.as_ref()) &&
+                  s.symbol.bind != elf::types::STB_GLOBAL {
+                    found.push(s.clone());
+                }
+            }
+            if found.len() == 0 {
+                warn!("st_name:{} not found", entry.st_name);
+                continue
+            } else if found.len() > 1 {
+                warn!("st_name:{} cannot be fixed", entry.st_name);
+                continue
+            }
+            info!("found: {:?}", found.first().unwrap().symbol.name);
+            info!("r_offset:0x{:0>16x}, st_name:{}", entry.r_offset, entry.st_name);
+            use std::slice;
+            let mut t = unsafe { slice::from_raw_parts_mut(
+                mem::transmute::<*mut libc::c_void, *mut u8>(
+                    canvas.offset(entry.r_offset as isize)
+                ), 8
+            ) };
+            LittleEndian::write_u64(t,
+                found.first().unwrap().offset +
+                found.first().unwrap().symbol.value);
+        }
         Ok(())
     }
-    fn try_on_dwarf(&self) -> Result<(), GenError> {
+    pub fn try_on_dwarf(&mut self, filepath: String, var_name: String, filename: String)
+      -> Result<(), GenError> {
+        let ef = elf::File::open_path(&filepath).unwrap();
+        let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
+        let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
+        let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
+        let file_name_table = FileNameTable::from_debug_line(debug_line);
+        let debug_info: Vec<u8> = ef.get_section(".debug_info").unwrap().data.clone();
+        for mut entry in &mut self.relas {
+            if entry.fixed || entry.st_name != var_name {
+                continue
+            }
+            let fname_entry = file_name_table.search_filename(filename.clone()).unwrap().entry;
+            let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
+              DW_TAG => DW_TAG_VARIABLE,
+              DW_AT_DECL_FILE => &[fname_entry]
+            }, DW_AT_LOCATION, u64);
+            if result.len() == 1 {
+                let _offset = result[0];
+                entry.fixed = true;
+            }
+        }
         Ok(())
     }
 }
@@ -138,6 +149,7 @@ impl fmt::Debug for SymbolIdent {
 }
 
 impl SymbolIdent {
+    #[allow(dead_code)]
     fn get_from(ef: &elf::File, offset: u64) -> Vec<SymbolIdent> {
         let symbols = match ef.get_section(".symtab") {
             Some(s) => ef.get_symbols(s).expect("Failed to get symbols of .symtab"),

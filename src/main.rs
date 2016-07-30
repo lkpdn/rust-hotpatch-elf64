@@ -14,14 +14,12 @@ use std::env;
 use std::path::PathBuf;
 use std::io;
 pub mod util;
-use util::GenError;
 
 #[macro_use]
 pub mod officer;
 use officer::Officer;
 #[macro_use]
 pub mod lib;
-use lib::dwarf::*;
 
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
@@ -112,40 +110,4 @@ fn main() {
         buffer.clear();
     };
     officer.release_target().expect("cannot release");
-}
-
-pub fn try_on_dwarf(filepath: String, _var_name: String, filename: String)
-  -> Result<u64, GenError> {
-    let ef = elf::File::open_path(&filepath).unwrap();
-    let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
-    let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
-    let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
-    let file_name_table = FileNameTable::from_debug_line(debug_line);
-    let fname_entry = file_name_table.search_filename(filename).unwrap().entry;
-    let debug_info: Vec<u8> = ef.get_section(".debug_info").unwrap().data.clone();
-    let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
-      DW_TAG => DW_TAG_VARIABLE,
-      DW_AT_DECL_FILE => &[fname_entry]
-    }, DW_AT_LOCATION, u64);
-    if result.len() > 1 { Err(GenError::Plain("cannot choose appropriate one".to_string())) }
-    else if result.len() == 1 { Ok(result[0]) }
-    else { Err(GenError::Plain("it was a fruitless try".to_string())) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-    #[test]
-    fn test_try_on_dwarf() {
-        let filepath = String::from("./files/c/build/test1");
-        let var_name = String::from("s_buf");
-        let filename = String::from("test1.c");
-        Command::new("/usr/bin/make")
-          .current_dir("./files/c")
-          .arg("all")
-          .status()
-          .expect("failed to make");
-        assert_eq!(try_on_dwarf(filepath, var_name, filename).unwrap(), 0x601050);
-    }
 }

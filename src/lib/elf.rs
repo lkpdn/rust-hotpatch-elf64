@@ -56,8 +56,7 @@ pub struct Fixer<'a> {
 }
 
 impl <'a> Fixer<'a> {
-    #[allow(dead_code)]
-    fn from_elf(ef: &'a elf::File) -> Result<Fixer<'a>, GenError> {
+    pub fn from_elf(ef: &'a elf::File) -> Result<Fixer<'a>, GenError> {
         let mut relas: Vec<SecRelaEntry> = Vec::new();
         relas.append(ef.get_sec_rela(".rela.dyn").unwrap().as_mut());
         relas.append(ef.get_sec_rela(".rela.plt").unwrap().as_mut());
@@ -66,8 +65,7 @@ impl <'a> Fixer<'a> {
             relas: relas,
         })
     }
-    #[allow(dead_code)]
-    fn rebuild_and_map(&mut self, symbols: &Vec<SymbolIdent>, canvas: *mut libc::c_void)
+    pub fn rebuild_and_map(&mut self, symbols: &Vec<SymbolIdent>, canvas: *mut libc::c_void)
       -> Result<(), GenError> {
         for entry in &self.relas {
             if entry.fixed { continue }
@@ -128,9 +126,9 @@ impl <'a> Fixer<'a> {
     }
 }
 
-struct SymbolIdent {
-    symbol: elf::types::Symbol,
-    offset: u64,
+pub struct SymbolIdent {
+    pub symbol: elf::types::Symbol,
+    pub offset: u64,
 }
 
 impl Clone for SymbolIdent {
@@ -150,7 +148,7 @@ impl fmt::Debug for SymbolIdent {
 
 impl SymbolIdent {
     #[allow(dead_code)]
-    fn get_from(ef: &elf::File, offset: u64) -> Vec<SymbolIdent> {
+    pub fn get_from(ef: &elf::File, offset: u64) -> Vec<SymbolIdent> {
         let symbols = match ef.get_section(".symtab") {
             Some(s) => ef.get_symbols(s).expect("Failed to get symbols of .symtab"),
             None => { warn!("Failed to get .symtab."); vec![] }

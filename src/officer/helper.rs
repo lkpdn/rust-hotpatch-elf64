@@ -9,59 +9,6 @@ use std::ptr;
 use std::io;
 use util::GenError;
 
-macro_rules! map_it {
-    (
-        $elf:ident,
-        $section:expr,
-        $dynsyms:ident,
-        $symbol_idents:expr,
-        $canvas:ident
-    ) => {
-        match $elf.get_section($section) {
-            Some(s) => {
-                let mut data_slice = &(s.data)[..];
-                for _ in 0..(s.shdr.size / s.shdr.entsize) {
-                    let r_offset: u64 = read_u64!($elf, data_slice).unwrap();
-                    let r_info: u64 = read_u64!($elf, data_slice).unwrap();
-                    let _r_addend: u64 = read_u64!($elf, data_slice).unwrap();
-                    let r_sym: u32 = (r_info >> 32) as u32;
-                    let ref st_name: String = $dynsyms[r_sym as usize].name;
-                    use std::str::pattern::Pattern;
-                    let mut found: Vec<SymbolIdent> = Vec::new();
-                    // XXX: decode locally static one's UUID if necessary, in gcc case.
-                    for s in $symbol_idents {
-                        if st_name == s.symbol.name.as_ref() as &str &&
-                          s.symbol.bind == elf::types::STB_GLOBAL {
-                            found.push(s.clone());
-                        } else if (st_name.clone() + ".").is_prefix_of(s.symbol.name.as_ref()) &&
-                          s.symbol.bind != elf::types::STB_GLOBAL {
-                            found.push(s.clone());
-                        }
-                    }
-                    if found.len() == 0 {
-                        warn!("st_name:{} not found!", st_name);
-                        continue;
-                    } else if found.len() > 1 {
-                        unimplemented!();
-                    }
-                    info!("found: {:?}", found.first().unwrap().symbol.name);
-                    info!("r_offset:0x{:0>16x}, st_name:{}", r_offset, st_name);
-                    use std::slice;
-                    let mut t = slice::from_raw_parts_mut(
-                        mem::transmute::<*mut libc::c_void, *mut u8>(
-                            $canvas.offset(r_offset as isize)
-                        ), 8
-                    );
-                    LittleEndian::write_u64(t,
-                        found.first().unwrap().offset +
-                        found.first().unwrap().symbol.value);
-                }
-            },
-            None => (),
-        }
-    };
-}
-
 pub fn set_data(pid:i32, addr: u64, buf: Vec<u8>, size: usize) -> Result<(), GenError> {
     let writer = ptrace::Writer::new(pid);
     info!("set_data(addr:{}, size:{})", addr, size);

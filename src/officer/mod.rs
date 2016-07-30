@@ -1,13 +1,10 @@
 extern crate elf;
 extern crate regex;
 extern crate libc;
-extern crate byteorder;
 extern crate posix_ipc as ipc;
 extern crate ptrace;
 use log::LogLevel;
-use byteorder::{ByteOrder, LittleEndian};
 use regex::Regex;
-use self::elf::types;
 use std::path::{Path, PathBuf};
 use std::io::BufReader;
 use std::fs;
@@ -16,9 +13,9 @@ use std::io::prelude::*;
 use std::mem;
 use std::time::Duration;
 use std::ptr;
-use std::fmt;
 use std::thread;
 use lib::ptrace::*;
+use lib::elf::{Fixer, SymbolIdent};
 
 use util::GenError;
 #[macro_use]
@@ -197,12 +194,8 @@ impl Officer {
                 dump_canvas(canvas, buf_size as usize, &mut io::stdout());
             }
 
-            let sec_dynsym = ef.get_section(".dynsym").unwrap();
-            let dynsyms = try!(ef.get_symbols(sec_dynsym)
-              .map_err(|e| GenError::ElfParseError(e)));
-
-            map_it!(ef, ".rela.dyn", dynsyms, &self.target.symbols, canvas);
-            map_it!(ef, ".rela.plt", dynsyms, &self.target.symbols, canvas);
+            let mut fixer = Fixer::from_elf(&ef).unwrap();
+            fixer.rebuild_and_map(&self.target.symbols, canvas).unwrap();
 
             // alloc space in target virtual memory
             let alloc_addr = try!(parasite.target_alloc(buf_size));
@@ -213,8 +206,7 @@ impl Officer {
             so_symbols.append(SymbolIdent::get_from(&ef, alloc_addr).as_mut());
             for s in &so_symbols { print!("{} ", s.symbol.name); }
 
-            map_it!(ef, ".rela.dyn", dynsyms, &mut so_symbols, canvas);
-            map_it!(ef, ".rela.plt", dynsyms, &mut so_symbols, canvas);
+            fixer.rebuild_and_map(&so_symbols, canvas).unwrap();
 
             if log_enabled!(LogLevel::Trace) {
                 dump_canvas(canvas, buf_size as usize, &mut io::stdout());
@@ -304,59 +296,6 @@ impl Parasite {
                 Err(GenError::RawOsError(e))
             }
         }
-    }
-}
-
-struct SymbolIdent {
-    symbol: elf::types::Symbol,
-    offset: u64,
-}
-
-impl Clone for SymbolIdent {
-    fn clone(&self) -> Self {
-        SymbolIdent {
-            symbol: self.symbol.clone(),
-            offset: self.offset,
-        }
-    }
-}
-
-impl fmt::Debug for SymbolIdent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} (offset: 0x{:x})", self.symbol, self.offset)
-    }
-}
-
-impl SymbolIdent {
-    fn get_from(ef: &elf::File, offset: u64) -> Vec<SymbolIdent> {
-        let symbols = match ef.get_section(".symtab") {
-            Some(s) => ef.get_symbols(s).expect("Failed to get symbols of .symtab"),
-            None => { warn!("Failed to get .symtab."); vec![] }
-        };
-        let dynsyms = match ef.get_section(".dynsym") {
-            Some(s) => ef.get_symbols(s).expect("Failed to get symbols of .dynsym"),
-            None => panic!("Failed to get .dynsym"),
-        };
-        let mut syms: Vec<SymbolIdent> = Vec::new();
-        for s in &symbols {
-            if s.shndx != 0 && s.shndx < 0xff {
-                trace!("{} SectionName: {}", s, ef.sections[s.shndx as usize].shdr.name);
-                syms.push(SymbolIdent {
-                    symbol: s.clone(),
-                    offset: offset,
-                });
-            }
-        };
-        for s in &dynsyms {
-            if s.shndx != 0 && s.shndx < 0xff {
-                trace!("{} SectionName: {}", s, ef.sections[s.shndx as usize].shdr.name);
-                syms.push(SymbolIdent {
-                    symbol: s.clone(),
-                    offset: offset,
-                });
-            }
-        };
-        syms
     }
 }
 

@@ -307,6 +307,85 @@ impl FileNameTable {
     }
 }
 
+macro_rules! dw_expression_parser {
+    ( $stream:tt ) => {{
+        let mut rdr = io::Cursor::new($stream);
+        let mut stack: VecDeque<i64> = VecDeque::new();
+        $dw_expression_parse!(rdr, stack)
+    }};
+    ( $rdr:tt, $stack:tt, $reg:tt ) => {{
+        match op {
+            DW_OP(i) if (0x70..0x8f).contains(i) => {
+                let reg = RegMapping.get(i - 0x70).cloned().unwrap();
+                let offset = rdr.read_leb128().unwrap();
+                stack.push_back($reg.get(reg) + offset);
+            },
+            DW_OP_BREGX => {
+                let reg = RegMapping.get(rdr.read_leb128().unwrap())
+                  .cloned().unwrap();
+                let offset = rdr.read_leb128().unwrap();
+                stack.push_back($reg.get(reg) + offset);
+            },
+        }
+        dw_expression_parse!(rdr, stack)
+    }};
+    ( $rdr:tt, $stack:tt ) => {{
+        let val = rdr.read_u8().unwrap();
+        let op = DW_OP(val);
+        if $rdr.position() == $rdr.get_ref().len() {
+            return Ok($stack.pop_front())
+        }
+        let operands = op.num_op_operands();
+        match op {
+            /* literal encodings */
+            DW_OP(i) if (0x30..0x4f).contains(i) => {
+                stack.push_back(i - 0x30);
+            },
+            DW_OP_ADDR => {
+                stack.push_back(rdr.read_u64::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST1U => {
+                stack.push_back(rdr.read_u8().unwrap());
+            },
+            DW_OP_CONST2U => {
+                stack.push_back(rdr.read_u16::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST4U => {
+                stack.push_back(rdr.read_u32::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST8U => {
+                stack.push_back(rdr.read_u64::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST1S => {
+                stack.push_back(rdr.read_i8().unwrap());
+            },
+            DW_OP_CONST2S => {
+                stack.push_back(rdr.read_i16::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST4S => {
+                stack.push_back(rdr.read_i32::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONST8S => {
+                stack.push_back(rdr.read_i64::<LittleEndian>().unwrap());
+            },
+            DW_OP_CONSTU => {
+                stack.push_back(rdr.read_leb128().unwrap());
+            },
+            DW_OP_CONSTS => {
+                stack.push_back(rdr.read_leb128().unwrap());
+            },
+            DW_OP_DUP => {
+                stack.push_front(*(stack.front().unwrap()));
+            },
+            DW_OP_DROP => {
+                stack.pop_front();
+            },
+            _ => { unimplemented!() },
+        }
+        dw_expression_parse!(rdr, stack)
+    }}
+}
+
 /*
  * Format and debugging information
  */

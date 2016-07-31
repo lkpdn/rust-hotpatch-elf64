@@ -56,6 +56,9 @@ pub struct Fixer<'a> {
 }
 
 impl <'a> Fixer<'a> {
+    pub fn all_fixed(&self) -> bool {
+        !self.relas.iter().any(|r| r.fixed == false)
+    }
     pub fn from_elf(ef: &'a elf::File) -> Result<Fixer<'a>, GenError> {
         let mut relas: Vec<SecRelaEntry> = Vec::new();
         relas.append(ef.get_sec_rela(".rela.dyn").unwrap().as_mut());

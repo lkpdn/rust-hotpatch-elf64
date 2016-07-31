@@ -3,6 +3,8 @@ use std::io::{self, Read, BufRead};
 use std::mem;
 use util::GenError;
 
+pub mod x86_64;
+
 #[derive(Debug, Clone, Copy)]
 pub struct CompilationUnitHeader {
     pub unit_length: u64,

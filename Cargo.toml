@@ -59,3 +59,6 @@ log = "0.3"
 posix-ipc = { git = "https://github.com/lkpdn/rust-posix-ipc", rev = "47f78cd" }
 ptrace = { git = "https://github.com/lkpdn/rust-ptrace.git", rev = "7614a30" }
 regex = "0.1"
+phf = "0.7.16"
+phf_macros = "0.7.16"
+

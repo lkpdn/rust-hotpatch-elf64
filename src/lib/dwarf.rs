@@ -108,7 +108,7 @@ impl AbbrevDeclAttrSpec {
                     DW_FORM_BLOCK => {
                         rdr.read_leb128_stream()
                     },
-                    _ => { panic!("oh my guiness") },
+                    _ => { panic!("oh my guinness") },
                 }
             },
             CLASS::CONSTANT  => {
@@ -139,7 +139,7 @@ impl AbbrevDeclAttrSpec {
                     DW_FORM_UDATA => {
                         rdr.read_leb128_stream()
                     },
-                    _ => { panic!("oh my guiness") },
+                    _ => { panic!("oh my guinness") },
                 }
             },
             CLASS::EXPRLOC => {
@@ -161,7 +161,7 @@ impl AbbrevDeclAttrSpec {
                         else { Ok(vec![1; 1]) }
                     },
                     DW_FORM_FLAG_PRESENT => { Ok(vec![1; 1]) },
-                    _ => { panic!("oh my guiness") },
+                    _ => { panic!("oh my guinness") },
                 }
             },
             CLASS::REFERENCE => {
@@ -189,7 +189,7 @@ impl AbbrevDeclAttrSpec {
                     DW_FORM_REF_UDATA => {
                         rdr.read_leb128_stream()
                     },
-                    _ => { panic!("oh my guiness") },
+                    _ => { panic!("oh my guinness") },
                 }
             },
             CLASS::STRING => {

@@ -1,7 +1,8 @@
-use byteorder::ReadBytesExt;
+use byteorder::{ReadBytesExt, LittleEndian};
 use std::io::{self, Read, BufRead};
 use std::mem;
 use util::GenError;
+use std::collections::VecDeque;
 
 pub mod x86_64;
 
@@ -307,83 +308,121 @@ impl FileNameTable {
     }
 }
 
-macro_rules! dw_expression_parser {
-    ( $stream:tt ) => {{
-        let mut rdr = io::Cursor::new($stream);
-        let mut stack: VecDeque<i64> = VecDeque::new();
-        $dw_expression_parse!(rdr, stack)
-    }};
-    ( $rdr:tt, $stack:tt, $reg:tt ) => {{
-        match op {
-            DW_OP(i) if (0x70..0x8f).contains(i) => {
-                let reg = RegMapping.get(i - 0x70).cloned().unwrap();
-                let offset = rdr.read_leb128().unwrap();
-                stack.push_back($reg.get(reg) + offset);
-            },
-            DW_OP_BREGX => {
-                let reg = RegMapping.get(rdr.read_leb128().unwrap())
-                  .cloned().unwrap();
-                let offset = rdr.read_leb128().unwrap();
-                stack.push_back($reg.get(reg) + offset);
-            },
+#[derive(Clone)]
+pub struct StackItem {
+    data: u64,
+    signed: bool,
+}
+
+pub struct ExpressionParser {
+    reader: io::Cursor<Vec<u8>>,
+    stack: VecDeque<StackItem>,
+}
+
+impl ExpressionParser {
+    pub fn new(stream: Vec<u8>) -> ExpressionParser {
+        let mut rdr = io::Cursor::new(stream);
+        let mut stack: VecDeque<StackItem> = VecDeque::new();
+        ExpressionParser {
+            reader: rdr,
+            stack: stack
         }
-        dw_expression_parse!(rdr, stack)
-    }};
-    ( $rdr:tt, $stack:tt ) => {{
-        let val = rdr.read_u8().unwrap();
+    }
+    pub fn set_stack(&mut self, stack: VecDeque<StackItem>) -> () {
+        self.stack = stack;
+    }
+    pub fn consume(&mut self) -> Result<StackItem, GenError> {
+        let val = self.reader.read_u8().unwrap();
         let op = DW_OP(val);
-        if $rdr.position() == $rdr.get_ref().len() {
-            return Ok($stack.pop_front())
+        if self.reader.position() == self.reader.get_ref().len() as u64 {
+            return Ok(self.stack.pop_front().unwrap())
         }
-        let operands = op.num_op_operands();
+        let _operands = op.num_of_operands();
         match op {
             /* literal encodings */
             DW_OP(i) if (0x30..0x4f).contains(i) => {
-                stack.push_back(i - 0x30);
+                self.stack.push_back(StackItem {
+                    data: (i - 0x30) as u64,
+                    signed: false,
+                });
             },
             DW_OP_ADDR => {
-                stack.push_back(rdr.read_u64::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_u64::<LittleEndian>().unwrap(),
+                    signed: false,
+                });
             },
             DW_OP_CONST1U => {
-                stack.push_back(rdr.read_u8().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_u8().unwrap() as u64,
+                    signed: false,
+                });
             },
             DW_OP_CONST2U => {
-                stack.push_back(rdr.read_u16::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_u16::<LittleEndian>().unwrap() as u64,
+                    signed: false,
+                });
             },
             DW_OP_CONST4U => {
-                stack.push_back(rdr.read_u32::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_u32::<LittleEndian>().unwrap() as u64,
+                    signed: false,
+                });
             },
             DW_OP_CONST8U => {
-                stack.push_back(rdr.read_u64::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_u64::<LittleEndian>().unwrap(),
+                    signed: false,
+                });
             },
             DW_OP_CONST1S => {
-                stack.push_back(rdr.read_i8().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_i8().unwrap() as u64,
+                    signed: true,
+                });
             },
             DW_OP_CONST2S => {
-                stack.push_back(rdr.read_i16::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_i16::<LittleEndian>().unwrap() as u64,
+                    signed: true,
+                });
             },
             DW_OP_CONST4S => {
-                stack.push_back(rdr.read_i32::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_i32::<LittleEndian>().unwrap() as u64,
+                    signed: true,
+                })
             },
             DW_OP_CONST8S => {
-                stack.push_back(rdr.read_i64::<LittleEndian>().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_i64::<LittleEndian>().unwrap() as u64,
+                    signed: true,
+                })
             },
             DW_OP_CONSTU => {
-                stack.push_back(rdr.read_leb128().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_leb128().unwrap() as u64,
+                    signed: false,
+                })
             },
             DW_OP_CONSTS => {
-                stack.push_back(rdr.read_leb128().unwrap());
+                self.stack.push_back(StackItem {
+                    data: self.reader.read_leb128().unwrap() as u64,
+                    signed: true,
+                })
             },
             DW_OP_DUP => {
-                stack.push_front(*(stack.front().unwrap()));
+                let front = (*(self.stack.front().unwrap())).clone();
+                self.stack.push_front(front);
             },
             DW_OP_DROP => {
-                stack.pop_front();
+                self.stack.pop_front();
             },
             _ => { unimplemented!() },
         }
-        dw_expression_parse!(rdr, stack)
-    }}
+        self.consume()
+    }
 }
 
 /*
@@ -1117,7 +1156,7 @@ macro_rules! search_debug_info {
 
 #[cfg(test)]
 mod tests {
-    use super::{consume_uleb128,consume_sleb128};
+    use super::*;
 
     #[test]
     fn test_consume_uleb128() {
@@ -1139,5 +1178,20 @@ mod tests {
         assert_eq!(consume_sleb128(&mut vec![0x80, 0x7f]).unwrap(), -128);
         assert_eq!(consume_sleb128(&mut vec![0x81, 0x01]).unwrap(), 129);
         assert_eq!(consume_sleb128(&mut vec![0xff, 0x7e]).unwrap(), -129);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_expression_parse() {
+        let mut parser = ExpressionParser::new(vec![
+            DW_OP_DUP.0, DW_OP_DROP.0, DW_OP_PICK.0, 2,
+            DW_OP_OVER.0, DW_OP_SWAP.0, DW_OP_ROT.0
+        ]);
+        parser.set_stack(vec![
+            StackItem{data: 17, signed: false},
+            StackItem{data: 29, signed: false},
+            StackItem{data: 1000, signed: false}
+        ].into_iter().collect());
+        parser.consume();
     }
 }

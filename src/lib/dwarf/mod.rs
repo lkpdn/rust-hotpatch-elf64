@@ -1,3 +1,4 @@
+extern crate ptrace;
 use byteorder::{ReadBytesExt, LittleEndian};
 use std::io::{self, Read, BufRead};
 use std::mem;
@@ -317,6 +318,7 @@ pub struct StackItem {
 pub struct ExpressionParser {
     reader: io::Cursor<Vec<u8>>,
     stack: VecDeque<StackItem>,
+    pid: Option<i32>,
 }
 
 impl ExpressionParser {
@@ -325,11 +327,15 @@ impl ExpressionParser {
         let mut stack: VecDeque<StackItem> = VecDeque::new();
         ExpressionParser {
             reader: rdr,
-            stack: stack
+            stack: stack,
+            pid: None
         }
     }
     pub fn set_stack(&mut self, stack: VecDeque<StackItem>) -> () {
         self.stack = stack;
+    }
+    pub fn set_pid(&mut self, pid: i32) -> () {
+        self.pid = Some(pid);
     }
     pub fn consume(&mut self) -> Result<StackItem, GenError> {
         let val = self.reader.read_u8().unwrap();
@@ -341,73 +347,73 @@ impl ExpressionParser {
         match op {
             /* literal encodings */
             DW_OP(i) if (0x30..0x4f).contains(i) => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: (i - 0x30) as u64,
                     signed: false,
                 });
             },
             DW_OP_ADDR => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_u64::<LittleEndian>().unwrap(),
                     signed: false,
                 });
             },
             DW_OP_CONST1U => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_u8().unwrap() as u64,
                     signed: false,
                 });
             },
             DW_OP_CONST2U => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_u16::<LittleEndian>().unwrap() as u64,
                     signed: false,
                 });
             },
             DW_OP_CONST4U => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_u32::<LittleEndian>().unwrap() as u64,
                     signed: false,
                 });
             },
             DW_OP_CONST8U => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_u64::<LittleEndian>().unwrap(),
                     signed: false,
                 });
             },
             DW_OP_CONST1S => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_i8().unwrap() as u64,
                     signed: true,
                 });
             },
             DW_OP_CONST2S => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_i16::<LittleEndian>().unwrap() as u64,
                     signed: true,
                 });
             },
             DW_OP_CONST4S => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_i32::<LittleEndian>().unwrap() as u64,
                     signed: true,
                 })
             },
             DW_OP_CONST8S => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_i64::<LittleEndian>().unwrap() as u64,
                     signed: true,
                 })
             },
             DW_OP_CONSTU => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_leb128().unwrap() as u64,
                     signed: false,
                 })
             },
             DW_OP_CONSTS => {
-                self.stack.push_back(StackItem {
+                self.stack.push_front(StackItem {
                     data: self.reader.read_leb128().unwrap() as u64,
                     signed: true,
                 })
@@ -418,6 +424,124 @@ impl ExpressionParser {
             },
             DW_OP_DROP => {
                 self.stack.pop_front();
+            },
+            DW_OP_PICK => {
+                let index = self.reader.read_u8().unwrap() as usize;
+                let copy = self.stack.get(index).unwrap().clone();
+                self.stack.push_front(copy);
+            },
+            DW_OP_OVER => {
+                let copy = self.stack.get(1).unwrap().clone();
+                self.stack.push_front(copy);
+            },
+            DW_OP_SWAP => {
+                self.stack.swap(0, 1);
+            },
+            DW_OP_ROT => {
+                self.stack.swap(0, 2);
+                self.stack.swap(0, 1);
+            },
+            DW_OP_DEREF|DW_OP_DEREF_SIZE => {
+                let addr = self.stack.pop_front().unwrap().data as u64;
+                try!(ptrace::attach(self.pid.unwrap())
+                  .map_err(|e| GenError::RawOsError(e)));
+                let reader = ptrace::Reader::new(self.pid.unwrap());
+                match reader.peek_data(addr) {
+                    Ok(v) => {
+                        self.stack.push_front(StackItem {
+                            data: match op {
+                                DW_OP_DEREF_SIZE => {
+                                    let siz = self.reader.read_u8().unwrap();
+                                    (v << (8 - siz) as u64) >> (8 - siz)
+                                },
+                                _ => { v }
+                            },
+                            signed: false,
+                        });
+                    },
+                    Err(_) => {
+                        return Err(GenError::RawOsError(
+                          io::Error::last_os_error().raw_os_error().unwrap() as usize)
+                        );
+                    }
+                }
+            },
+            DW_OP_ABS => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: n.abs() as u64,
+                    signed: false,
+                });
+            },
+            DW_OP_AND => {
+                let n = self.stack.pop_front().unwrap().data;
+                let m = self.stack.pop_front().unwrap().data;
+                self.stack.push_front(StackItem {
+                    data: n & m,
+                    signed: false,
+                });
+            },
+            DW_OP_DIV => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                let m = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: (m / n) as u64,
+                    signed: true,
+                });
+            },
+            DW_OP_MINUS => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                let m = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: (m - n) as u64,
+                    signed: true,
+                });
+            },
+            DW_OP_MOD => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                let m = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: (m % n) as u64,
+                    signed: true,
+                });
+            },
+            DW_OP_MUL => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                let m = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: (m * n) as u64,
+                    signed: true,
+                });
+            },
+            DW_OP_NEG => {
+                let n = self.stack.pop_front().unwrap().data as i64;
+                self.stack.push_front(StackItem {
+                    data: (- n) as u64,
+                    signed: false,
+                });
+            },
+            DW_OP_NOT => {
+                let n = self.stack.pop_front().unwrap().data;
+                self.stack.push_front(StackItem {
+                    data: !n,
+                    signed: false,
+                });
+            },
+            DW_OP_OR => {
+                let n = self.stack.pop_front().unwrap().data;
+                let m = self.stack.pop_front().unwrap().data;
+                self.stack.push_front(StackItem {
+                    data: n | m,
+                    signed: false,
+                });
+            },
+            DW_OP_plus => {
+                let n = self.stack.pop_front().unwrap().data;
+                let m = self.stack.pop_front().unwrap().data;
+                self.stack.push_front(StackItem {
+                    data: n + m,
+                    signed: false,
+                });
             },
             _ => { unimplemented!() },
         }
@@ -1181,7 +1305,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_expression_parse() {
         let mut parser = ExpressionParser::new(vec![
             DW_OP_DUP.0, DW_OP_DROP.0, DW_OP_PICK.0, 2,
@@ -1192,6 +1315,7 @@ mod tests {
             StackItem{data: 29, signed: false},
             StackItem{data: 1000, signed: false}
         ].into_iter().collect());
-        parser.consume();
+        let ret = parser.consume().unwrap().data;
+        assert_eq!(ret, 1000);
     }
 }

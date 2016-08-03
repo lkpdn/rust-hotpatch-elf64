@@ -118,7 +118,7 @@ impl <'a> Fixer<'a> {
             let fname_entry = file_name_table.search_filename(filename.clone()).unwrap().entry;
             let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
               DW_TAG => DW_TAG_VARIABLE,
-              DW_AT_DECL_FILE => &[fname_entry]
+              DW_AT_DECL_FILE => fname_entry as u64
             }, DW_AT_LOCATION, u64);
             if result.len() == 1 {
                 let _offset = result[0];

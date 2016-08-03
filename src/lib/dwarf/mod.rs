@@ -231,7 +231,6 @@ impl AbbrevDeclAttrSpec {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct FileNameTableEntry {
     pub entry: u8,
@@ -315,6 +314,10 @@ pub struct StackItem {
     signed: bool,
 }
 
+impl StackItem {
+    pub fn get_data(&self) -> u64 { self.data }
+}
+
 pub struct ExpressionParser {
     reader: io::Cursor<Vec<u8>>,
     stack: VecDeque<StackItem>,
@@ -323,8 +326,8 @@ pub struct ExpressionParser {
 
 impl ExpressionParser {
     pub fn new(stream: Vec<u8>) -> ExpressionParser {
-        let mut rdr = io::Cursor::new(stream);
-        let mut stack: VecDeque<StackItem> = VecDeque::new();
+        let rdr = io::Cursor::new(stream);
+        let stack: VecDeque<StackItem> = VecDeque::new();
         ExpressionParser {
             reader: rdr,
             stack: stack,
@@ -535,7 +538,7 @@ impl ExpressionParser {
                     signed: false,
                 });
             },
-            DW_OP_plus => {
+            DW_OP_PLUS => {
                 let n = self.stack.pop_front().unwrap().data;
                 let m = self.stack.pop_front().unwrap().data;
                 self.stack.push_front(StackItem {
@@ -1252,7 +1255,6 @@ macro_rules! search_debug_info {
             if tag != $tag { skip = true }
             for attr_spec in &abbrev_decl.attr_specs {
                 let name: DW_AT = attr_spec.name;
-                $(
                 let data: Vec<u8> = attr_spec.consume(&mut rdr, compilation_unit_header).unwrap();
                 if $attr_to_get == name {
                     unsafe {
@@ -1262,8 +1264,11 @@ macro_rules! search_debug_info {
                         });
                     }
                 }
+                $(
                 if !skip && $attr == name {
-                    if ! data.starts_with($val) { skip = true }
+                    let mut parser = ExpressionParser::new(data.clone());
+                    let ret = parser.consume().unwrap().get_data();
+                    if ret != $val { skip = true }
                 }
                 )*
             }

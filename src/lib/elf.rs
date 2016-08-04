@@ -103,8 +103,9 @@ impl <'a> Fixer<'a> {
         }
         Ok(())
     }
-    pub fn try_on_dwarf(&mut self, filepath: String, var_name: String, filename: String)
-      -> Result<(), GenError> {
+    // XXX: too ugly interface.
+    pub fn try_on_dwarf(&mut self, filepath: String, var_name: String, filename: String,
+      offset: u64, canvas: *mut libc::c_void) -> Result<(), GenError> {
         let ef = elf::File::open_path(&filepath).unwrap();
         let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
         let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
@@ -121,8 +122,15 @@ impl <'a> Fixer<'a> {
               DW_AT_DECL_FILE => fname_entry as u64
             }, DW_AT_LOCATION, u64);
             if result.len() == 1 {
-                let _offset = result[0];
+                let value = result[0];
                 entry.fixed = true;
+                use std::slice;
+                let mut t = unsafe { slice::from_raw_parts_mut(
+                    mem::transmute::<*mut libc::c_void, *mut u8>(
+                        canvas.offset(entry.r_offset as isize)
+                    ), 8
+                ) };
+                LittleEndian::write_u64(t, offset + value);
             }
         }
         Ok(())

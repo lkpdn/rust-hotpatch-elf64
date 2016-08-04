@@ -7,6 +7,7 @@ use std::str::pattern::Pattern;
 use self::elf::*;
 use util::GenError;
 use lib::dwarf::*;
+use lib::dwarf::consts::*;
 
 pub trait ElfFileExt {
     fn get_sec_rela(&self, sec_name: &str) -> Result<Vec<SecRelaEntry>, GenError>;

@@ -1,8 +1,11 @@
 extern crate elf;
 extern crate libc;
+extern crate ptrace;
 use byteorder::{ByteOrder, LittleEndian};
+use std::cell::Cell;
 use std::fmt;
 use std::mem;
+use std::path::PathBuf;
 use std::str::pattern::Pattern;
 use self::elf::*;
 use util::GenError;
@@ -51,25 +54,51 @@ pub struct SecRelaEntry {
     pub fixed: bool,
 }
 
-pub struct Fixer<'a> {
-    pub elf: &'a elf::File,
+pub struct Fixer {
+    pub elf: elf::File,
     pub relas: Vec<SecRelaEntry>,
+    pub canvas: Cell<*mut libc::c_void>,
+    pub canvas_size: usize,
 }
 
-impl <'a> Fixer<'a> {
+impl Fixer {
     pub fn all_fixed(&self) -> bool {
         !self.relas.iter().any(|r| r.fixed == false)
     }
-    pub fn from_elf(ef: &'a elf::File) -> Result<Fixer<'a>, GenError> {
+    pub fn write(&self, pid: i32, alloc_addr: u64) -> Result<(), GenError> {
+        // write
+        let writer = ptrace::Writer::new(pid);
+        let buf = unsafe {
+            Vec::from_raw_parts(
+                mem::transmute::<*mut libc::c_void, *mut u8>(self.canvas.get()),
+                self.canvas_size as usize,
+                self.canvas_size as usize
+            )
+        };
+        writer.write_data(alloc_addr as u64, &buf)
+          .map_err(|e| GenError::Plain(format!("Error: {:?}", e)))
+    }
+    pub fn new(ef_path: &str) -> Result<Fixer, GenError> {
+        let ef = try!(elf::File::open_path(PathBuf::from(ef_path))
+          .map_err(|e| GenError::ElfParseError(e)));
+        let buf_size = ef.sections
+          .iter()
+          .filter(|s| s.shdr.flags.0 & (elf::types::SHF_WRITE.0 | elf::types::SHF_ALLOC.0) != 0)
+          .map(|s| ((s.shdr.addr + s.shdr.size + s.shdr.addralign - 1) /
+            s.shdr.addralign) * s.shdr.addralign)
+          .max().unwrap() as usize;
+        let canvas: *mut libc::c_void = unsafe { libc::malloc(buf_size) };
         let mut relas: Vec<SecRelaEntry> = Vec::new();
         relas.append(ef.get_sec_rela(".rela.dyn").unwrap().as_mut());
         relas.append(ef.get_sec_rela(".rela.plt").unwrap().as_mut());
         Ok(Fixer {
-            elf: &ef,
+            elf: ef,
             relas: relas,
+            canvas: Cell::new(canvas),
+            canvas_size: buf_size,
         })
     }
-    pub fn rebuild_and_map(&mut self, symbols: &Vec<SymbolIdent>, canvas: *mut libc::c_void)
+    pub fn rebuild_and_map(&mut self, symbols: &Vec<SymbolIdent>)
       -> Result<(), GenError> {
         for entry in &self.relas {
             if entry.fixed { continue }
@@ -95,7 +124,7 @@ impl <'a> Fixer<'a> {
             use std::slice;
             let mut t = unsafe { slice::from_raw_parts_mut(
                 mem::transmute::<*mut libc::c_void, *mut u8>(
-                    canvas.offset(entry.r_offset as isize)
+                    self.canvas.get().offset(entry.r_offset as isize)
                 ), 8
             ) };
             LittleEndian::write_u64(t,
@@ -105,9 +134,9 @@ impl <'a> Fixer<'a> {
         Ok(())
     }
     // XXX: too ugly interface.
-    pub fn try_on_dwarf(&mut self, filepath: String, var_name: String, filename: String,
-      offset: u64, canvas: *mut libc::c_void) -> Result<(), GenError> {
-        let ef = elf::File::open_path(&filepath).unwrap();
+    pub fn try_on_dwarf(&mut self, exec_path: &str, var_name: String, filename: String,
+      offset: u64) -> Result<(), GenError> {
+        let ef = elf::File::open_path(exec_path).unwrap();
         let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
         let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
         let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
@@ -128,7 +157,7 @@ impl <'a> Fixer<'a> {
                 use std::slice;
                 let mut t = unsafe { slice::from_raw_parts_mut(
                     mem::transmute::<*mut libc::c_void, *mut u8>(
-                        canvas.offset(entry.r_offset as isize)
+                        self.canvas.get().offset(entry.r_offset as isize)
                     ), 8
                 ) };
                 LittleEndian::write_u64(t, offset + value);

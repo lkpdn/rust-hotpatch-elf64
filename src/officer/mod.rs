@@ -25,6 +25,7 @@ use self::helper::*;
 pub struct Officer {
     target: Target,
     parasites: Vec<Parasite>,
+    fixer: Option<Box<Fixer>>,
 }
 
 impl Officer {
@@ -43,11 +44,12 @@ impl Officer {
             }
         }
     }
-    pub fn from_pid(pid: i32) -> Result<Officer, GenError> {
+    pub fn new(pid: i32, path: &Path) -> Result<Officer, GenError> {
         let mut target = Target {
             pid: pid,
+            exec_path: path.to_path_buf(),
+            offset: 0,
             symbols: vec![],
-            source_path: PathBuf::from(String::new()),
         };
         let maps =try!(fs::File::open(format!("/proc/{}/maps", &target.pid))
           .map_err(|e| GenError::StdIoError(e)));
@@ -85,6 +87,9 @@ impl Officer {
                 match elf::File::open_path(&path) {
                     Ok(f) => {
                         if read_ones.contains(&path) { continue }
+                        if path == target.exec_path {
+                            target.offset = addr_s;
+                        }
                         read_ones.push(path.clone());
                         info!("get symbols from: {:?}", path);
                         target.symbols.append(SymbolIdent::get_from(&f, addr_s).as_mut());
@@ -97,6 +102,7 @@ impl Officer {
         Ok(Officer {
             target: target,
             parasites: vec![],
+            fixer: None,
         })
     }
     pub fn attach_target(&self) -> Result<i64, GenError> {
@@ -160,23 +166,13 @@ impl Officer {
     }
     pub fn dl(&mut self, idx: usize) -> Result<(), GenError> {
         let parasite = &mut self.parasites[idx];
-        let ef = try!(elf::File::open_path(PathBuf::from(&parasite.filepath))
-          .map_err(|e| GenError::ElfParseError(e)));
+        let mut fixer = Box::new(Fixer::new(&parasite.filepath).unwrap());
         // SHF_WRITE, SHF_ALLOC ONLY
-        let secs = ef.sections
-          .iter()
-          .filter(|s| s.shdr.flags.0 & (elf::types::SHF_WRITE.0 | elf::types::SHF_ALLOC.0) != 0)
-          .collect::<Vec<_>>();
-
-        let buf_size = secs
-          .iter()
-          .map(|s| ((s.shdr.addr + s.shdr.size + s.shdr.addralign - 1) /
-                    s.shdr.addralign) * s.shdr.addralign)
-          .max().unwrap();
-        info!("parasite space size: {}", buf_size);
         unsafe {
-            let canvas: *mut libc::c_void = libc::malloc(buf_size as usize);
-            for sec in secs {
+            let _ = fixer.elf.sections
+              .iter()
+              .filter(|s| s.shdr.flags.0 & (elf::types::SHF_WRITE.0 | elf::types::SHF_ALLOC.0) != 0)
+              .map(|sec| {
                 info!("{}: addr:{} offset:{} size:{} addralign:{}",
                     sec.shdr.name,
                     sec.shdr.addr,
@@ -185,71 +181,65 @@ impl Officer {
                     sec.shdr.addralign);
                 ptr::copy_nonoverlapping(
                     sec.data.as_ptr() as *const libc::c_void,
-                    canvas.offset(sec.shdr.addr as isize),
+                    fixer.canvas.get().offset(sec.shdr.addr as isize),
                     sec.shdr.size as usize
                 );
-            }
+              });
 
             if log_enabled!(LogLevel::Trace) {
-                dump_canvas(canvas, buf_size as usize, &mut io::stdout());
+                dump_canvas(fixer.canvas.get(), fixer.canvas_size as usize, &mut io::stdout());
             }
 
-            let mut fixer = Fixer::from_elf(&ef).unwrap();
-            fixer.rebuild_and_map(&self.target.symbols, canvas).unwrap();
+            fixer.rebuild_and_map(&self.target.symbols).unwrap();
 
             // alloc space in target virtual memory
-            let alloc_addr = try!(parasite.target_alloc(buf_size));
+            let alloc_addr = try!(parasite.target_alloc(fixer.canvas_size as u64));
             info!("will reside at 0x{:0>16x}", alloc_addr);
 
             // locally resolve symbols
             let mut so_symbols: Vec<SymbolIdent> = Vec::new();
-            so_symbols.append(SymbolIdent::get_from(&ef, alloc_addr).as_mut());
+            so_symbols.append(SymbolIdent::get_from(&(fixer.elf), alloc_addr).as_mut());
             for s in &so_symbols { print!("{} ", s.symbol.name); }
 
-            fixer.rebuild_and_map(&so_symbols, canvas).unwrap();
+            fixer.rebuild_and_map(&so_symbols).unwrap();
 
             if log_enabled!(LogLevel::Trace) {
-                dump_canvas(canvas, buf_size as usize, &mut io::stdout());
+                dump_canvas(fixer.canvas.get(), fixer.canvas_size as usize, &mut io::stdout());
+            }
+
+            if ! fixer.all_fixed() {
+                self.fixer = Some(fixer);
+                return Err(GenError::Plain(String::from("Not all would be fixed up.")));
             }
 
             // write
-            let writer = ptrace::Writer::new(self.target.pid);
-            let buf = Vec::from_raw_parts(
-                mem::transmute::<*mut libc::c_void, *mut u8>(canvas),
-                buf_size as usize,
-                buf_size as usize
-            );
-            match writer.write_data(alloc_addr as u64, &buf) {
-                Ok(_) => info!("finally parasite"),
-                Err(e) => panic!("Error: {:?}", e)
-            }
+            try!(fixer.write(self.target.pid, alloc_addr));
 
             parasite.addr = alloc_addr;
             parasite.symbols = so_symbols;
+            self.fixer = Some(fixer);
         }
         Ok(())
     }
-    pub fn set_target_source(&mut self, file_path: String) -> Result<(), GenError> {
-        self.target.set_source_path(file_path)
+    pub fn fix_var(&mut self, var_name: String, source: String)
+      -> Result<(), GenError> {
+        let exec_path = self.target.exec_path.to_str().unwrap();
+        let offset = self.target.offset;
+        try!(self.fixer.as_mut()
+          .ok_or(GenError::Plain(String::from("No fixer available")))
+          .and_then(|f| {
+              let _ = (*f).try_on_dwarf(exec_path, var_name, source, offset);
+              Ok(())
+          }));
+        Ok(())
     }
 }
 
 struct Target {
     pid: i32,
+    exec_path: PathBuf,
+    offset: u64,
     symbols: Vec<SymbolIdent>,
-    source_path: PathBuf,
-}
-
-impl Target {
-    fn set_source_path(&mut self, file_path: String) -> Result<(), GenError> {
-        let path = Path::new(&file_path);
-        if path.exists() {
-            self.source_path = path.to_owned();
-            Ok(())
-        } else {
-            Err(GenError::Plain(format!("No such file: {}", file_path)))
-        }
-    }
 }
 
 struct Parasite {
@@ -303,18 +293,22 @@ impl Parasite {
 mod tests {
     extern crate libc;
     use super::Officer;
+    use std::env;
 
     #[test]
-    fn officer_from_pid() {
+    fn officer_new() {
         let pid = fork_and_halt();
-        let officer = Officer::from_pid(pid).unwrap();
+        let curr_exec = env::current_exe().unwrap();
+        let officer = Officer::new(pid, curr_exec.as_path()).unwrap();
         assert_eq!(officer.target.pid, pid);
+        assert_eq!(officer.target.exec_path, curr_exec);
     }
 
     #[test]
     fn officer_attach_and_release() {
         let pid = fork_and_halt();
-        let officer = Officer::from_pid(pid).unwrap();
+        let curr_exec = env::current_exe().unwrap();
+        let officer = Officer::new(pid, curr_exec.as_path()).unwrap();
         assert_eq!(officer.attach_target().unwrap(), 0);
         assert_eq!(officer.release_target().unwrap(), 0);
     }

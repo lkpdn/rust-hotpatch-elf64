@@ -228,7 +228,7 @@ impl Officer {
         try!(self.fixer.as_mut()
           .ok_or(GenError::Plain(String::from("No fixer available")))
           .and_then(|f| {
-              let _ = (*f).try_on_dwarf(exec_path, var_name, source, offset);
+              let _ = (*f).try_on_dwarf(String::from(exec_path), var_name, source, offset);
               Ok(())
           }));
         Ok(())

@@ -1,10 +1,10 @@
-CC = gcc
-CFLAGS=-Wall -O0 -g
-EXE=$(patsubst %.c,%,$(wildcard *.c))
-.PHONY: all clean
-all: $(EXE)
-%: %.c
-	@-mkdir build
-	@$(CC) $< -o ./build/$@ $(CFLAGS) $(CPPFLAGS)
-clean:
-	@rm ./build/$(EXE)
+TESTS=$(shell ls -d test*)
+.PHONY: all $(TESTS)
+all: $(patsubst %,all-%,$(TESTS))
+clean: $(patsubst %,clean-%,$(TESTS))
+all-%:
+	@-make -C $*/orig
+	@-make -C $*/patch
+clean-%:
+	@-make -C $*/orig clean
+	@-make -C $*/patch clean

@@ -134,11 +134,10 @@ impl Fixer {
         Ok(())
     }
     // XXX: too ugly interface.
-    pub fn try_on_dwarf(&mut self, exec_path: &str, var_name: String, filename: String,
+    pub fn try_on_dwarf(&mut self, exec_path: String, var_name: String, filename: String,
       offset: u64) -> Result<(), GenError> {
         let ef = elf::File::open_path(exec_path).unwrap();
         let debug_abbrev_data: Vec<u8> = ef.get_section(".debug_abbrev").unwrap().data.clone();
-        let abbrev_decls = AbbrevDecls::from_debug_abbrev(debug_abbrev_data);
         let debug_line: Vec<u8> = ef.get_section(".debug_line").unwrap().data.clone();
         let file_name_table = FileNameTable::from_debug_line(debug_line);
         let debug_info: Vec<u8> = ef.get_section(".debug_info").unwrap().data.clone();
@@ -147,7 +146,7 @@ impl Fixer {
                 continue
             }
             let fname_entry = file_name_table.search_filename(filename.clone()).unwrap().entry;
-            let result : Vec<u64> = search_debug_info!(debug_info, abbrev_decls, {
+            let result : Vec<u64> = search_debug_info!(debug_info, debug_abbrev_data, {
               DW_TAG => DW_TAG_VARIABLE,
               DW_AT_DECL_FILE => fname_entry as u64
             }, DW_AT_LOCATION, u64);
@@ -218,5 +217,30 @@ impl SymbolIdent {
             }
         };
         syms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Fixer;
+    use std::process::Command;
+
+    fn ensure_make() {
+        Command::new("/usr/bin/make")
+          .current_dir("./files/c")
+          .status()
+          .expect("failed to make");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_try_on_dwarf() {
+        ensure_make();
+        let orig = "./files/c/test1/build/prime".to_string();
+        let patch = "./files/c/test1/build/bar.so";
+        let source = "dummy.c".to_string();
+        let var_name = String::from("s_buf");
+        let mut fixer = Fixer::new(&patch).unwrap();
+        fixer.try_on_dwarf(orig, var_name, source, 0);
     }
 }

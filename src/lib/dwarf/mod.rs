@@ -27,8 +27,14 @@ impl AbbrevDecls {
     pub fn from_debug_abbrev(debug_abbrev: Vec<u8>) -> AbbrevDecls {
         let mut vc = debug_abbrev.clone();
         let mut decls: Vec<AbbrevDecl> = Vec::new();
+        let mut last_decl_code = 0;
         while vc.len() > 13 { // code + tag + children = 13
             let decl = AbbrevDecl::from_slice(&vc);
+            if decl.code < last_decl_code {
+                break;
+            } else {
+                last_decl_code = decl.code;
+            }
             let size = decl.size;
             decls.push(decl);
             vc.drain(0..size);
@@ -156,9 +162,13 @@ impl AbbrevDeclAttrSpec {
                 let mut parser = ExpressionParser::new(
                     rdr.get_ref()[position as usize..new_position as usize].to_vec()
                 );
-                let ret = parser.consume().unwrap().data;
-                let ret_v = unsafe { mem::transmute::<u64, [u8; 8]>(ret) };
-                Ok(ret_v.to_vec())
+                match parser.consume() {
+                    Ok(v) => {
+                        let ret = unsafe { mem::transmute::<u64, [u8; 8]>(v.data) };
+                        Ok(ret.to_vec())
+                    },
+                    Err(e) => { Err(e) },
+                }
             },
             CLASS::FLAG => {
                 match self.form {
@@ -343,11 +353,14 @@ impl ExpressionParser {
         self.pid = Some(pid);
     }
     pub fn consume(&mut self) -> Result<StackItem, GenError> {
+        if self.reader.position() == self.reader.get_ref().len() as u64 {
+            match self.stack.pop_front() {
+                Some(v) => { return Ok(v) },
+                None => { return Err(GenError::Plain(String::from("nothing on stack"))) },
+            }
+        }
         let val = self.reader.read_u8().unwrap();
         let op = DW_OP(val);
-        if self.reader.position() == self.reader.get_ref().len() as u64 {
-            return Ok(self.stack.pop_front().unwrap())
-        }
         match op {
             /* literal encodings */
             DW_OP(i) if (0x30..0x4f).contains(i) => {
@@ -486,6 +499,7 @@ impl ExpressionParser {
                     }
                 }
             },
+            DW_OP_CALL_FRAME_CFA => {},
             DW_OP_ABS => {
                 let n = self.stack.pop_front().unwrap().data as i64;
                 self.stack.push_front(StackItem {
@@ -713,7 +727,7 @@ impl CursorExt for io::Cursor<Vec<u8>> {
 macro_rules! search_debug_info {
     (
         $data:ident,
-        $abbrev_decls:ident,
+        $debug_abbrev:ident,
         { DW_TAG => $tag:path,
         $($attr:path => $val:expr),* },
         $attr_to_get:expr,
@@ -725,73 +739,93 @@ macro_rules! search_debug_info {
         use std::io;
         // consume header
         let mut rdr = io::Cursor::new($data.clone());
-        let first_4bytes = rdr.read_u32::<LittleEndian>().unwrap();
-        let compilation_unit_header = match first_4bytes {
-            0xffff_ffff => {
-                let unit_length = rdr.read_u64::<LittleEndian>().unwrap();
-                let version = rdr.read_u16::<LittleEndian>().unwrap();
-                let debug_abbrev_offset = rdr.read_u64::<LittleEndian>().unwrap();
-                let address_size = rdr.read_u8().unwrap();
-                CompilationUnitHeader {
-                    unit_length: unit_length,
-                    version: version,
-                    debug_abbrev_offset: debug_abbrev_offset,
-                    address_size: address_size,
-                    dwarf_bit: 64u8,
-                }
-            },
-            _ => {
-                rdr.set_position(0);
-                let unit_length = rdr.read_u32::<LittleEndian>().unwrap();
-                let version = rdr.read_u16::<LittleEndian>().unwrap();
-                let debug_abbrev_offset = rdr.read_u32::<LittleEndian>().unwrap();
-                let address_size = rdr.read_u8().unwrap();
-                CompilationUnitHeader {
-                    unit_length: unit_length as u64,
-                    version: version,
-                    debug_abbrev_offset: debug_abbrev_offset as u64,
-                    address_size: address_size,
-                    dwarf_bit: 32u8,
-                }
-            }
-        };
-
-        // XXX: avoid inefficient loop and match
         let mut results: Vec<$val_type> = Vec::new();
-        let mut candidates: Vec<$val_type> = Vec::new();
+
         loop {
-            let abbrev_number = rdr.read_leb128().unwrap();
-            if rdr.position() == rdr.get_ref().len() as u64 { break }
-            if abbrev_number == 0 { continue }
-            let abbrev_decl: &AbbrevDecl = $abbrev_decls.search_by_code(abbrev_number).unwrap();
-            let tag: DW_TAG = abbrev_decl.tag;
-            let mut skip: bool = false;
-            if tag != $tag { skip = true }
-            for attr_spec in &abbrev_decl.attr_specs {
-                let name: DW_AT = attr_spec.name;
-                let data: Vec<u8> = attr_spec.consume(&mut rdr, compilation_unit_header).unwrap();
-                if $attr_to_get == name {
-                    unsafe {
-                        candidates.push(match intrinsics::type_name::<$val_type>() {
-                            "u64" => { data.as_slice().read_u64::<LittleEndian>().unwrap() },
-                            _ => { mem::transmute(data.as_ptr() as $val_type) },
-                        });
+            let offset = rdr.position();
+            let first_4bytes = rdr.read_u32::<LittleEndian>().unwrap();
+            let compilation_unit_header = match first_4bytes {
+                0xffff_ffff => {
+                    let unit_length = rdr.read_u64::<LittleEndian>().unwrap();
+                    let version = rdr.read_u16::<LittleEndian>().unwrap();
+                    let debug_abbrev_offset = rdr.read_u64::<LittleEndian>().unwrap();
+                    let address_size = rdr.read_u8().unwrap();
+                    CompilationUnitHeader {
+                        unit_length: unit_length,
+                        version: version,
+                        debug_abbrev_offset: debug_abbrev_offset,
+                        address_size: address_size,
+                        dwarf_bit: 64u8,
+                    }
+                },
+                _ => {
+                    rdr.set_position(offset);
+                    let unit_length = rdr.read_u32::<LittleEndian>().unwrap();
+                    let version = rdr.read_u16::<LittleEndian>().unwrap();
+                    let debug_abbrev_offset = rdr.read_u32::<LittleEndian>().unwrap();
+                    let address_size = rdr.read_u8().unwrap();
+                    CompilationUnitHeader {
+                        unit_length: unit_length as u64,
+                        version: version,
+                        debug_abbrev_offset: debug_abbrev_offset as u64,
+                        address_size: address_size,
+                        dwarf_bit: 32u8,
                     }
                 }
-                $(
-                if !skip && $attr == name {
-                    let mut parser = ExpressionParser::new(data.clone());
-                    let ret = parser.consume().unwrap().get_data();
-                    if ret != $val { skip = true }
+            };
+            let abbrev_decls = AbbrevDecls::from_debug_abbrev(
+                (&$debug_abbrev[
+                  compilation_unit_header.debug_abbrev_offset as usize
+                  ..
+                  $debug_abbrev.len()
+                ]).to_vec()
+            );
+            let mut candidates: Vec<$val_type> = Vec::new();
+            let cycle_limit = offset + compilation_unit_header.unit_length +
+              compilation_unit_header.dwarf_bit as u64 / 8;
+            while rdr.position() < cycle_limit {
+                let abbrev_number = rdr.read_leb128().unwrap();
+                debug!("abbrev num.: {}", abbrev_number);
+                if abbrev_number == 0 { continue }
+                let abbrev_decl: &AbbrevDecl = abbrev_decls.search_by_code(abbrev_number).unwrap();
+                let tag: DW_TAG = abbrev_decl.tag;
+                let mut skip: bool = false;
+                if tag != $tag { skip = true }
+                for attr_spec in &abbrev_decl.attr_specs {
+                    let name: DW_AT = attr_spec.name;
+                    debug!("{:?}", name);
+                    let spec_data =  attr_spec.consume(&mut rdr, compilation_unit_header);
+                    if spec_data.is_err() { continue }
+                    let data: Vec<u8> = spec_data.unwrap();
+                    if $attr_to_get == name {
+                        unsafe {
+                            candidates.push(match intrinsics::type_name::<$val_type>() {
+                                "u64" => { data.as_slice().read_u64::<LittleEndian>().unwrap() },
+                                _ => { mem::transmute(data.as_ptr() as $val_type) },
+                            });
+                        }
+                    }
+                    $(
+                    if !skip && $attr == name {
+                        let mut copied = data.clone();
+                        if copied.len() < 8 {
+                            let mut appended = vec![0; 8 - copied.len()];
+                            copied.append(&mut appended);
+                        }
+                        if copied.as_slice().read_u64::<LittleEndian>().unwrap() != $val {
+                            skip = true
+                        }
+                    }
+                    )*
                 }
-                )*
-            }
-            if skip == false {
-                match candidates.pop() {
-                    Some(c) => results.push(c),
-                    None => (),
+                if skip == false {
+                    match candidates.pop() {
+                        Some(c) => results.push(c),
+                        None => (),
+                    }
                 }
             }
+            if rdr.position() == rdr.get_ref().len() as u64 { break }
         }
         results
     }}
@@ -836,6 +870,6 @@ mod tests {
             StackItem{data: 1000, signed: false}
         ].into_iter().collect());
         let ret = parser.consume().unwrap().data;
-        assert_eq!(ret, 1000);
+        assert_eq!(ret, 17);
     }
 }

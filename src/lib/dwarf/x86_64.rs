@@ -3,6 +3,7 @@ extern crate phf;
 use lib::sys::regs::Register;
 use lib::sys::regs::x86_64::*;
 
+#[allow(dead_code)]
 static REG_MAPPING: phf::Map<u8, Register> = phf_map! {
     0u8  => REG_RAX,
     1u8  => REG_RDX,
